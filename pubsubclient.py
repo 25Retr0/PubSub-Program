@@ -17,11 +17,21 @@ from dataclasses import dataclass
 from typing import Optional
 
 ### Constants ##################################################################
-@dataclass(frozen=True)
 class Constants:
     OPTION_ARGUMENT = "--"
 
-CONSTANTS = Constants()
+class Errors:
+    USAGE_ERROR_CODE = 1
+    BAD_CLIENT_ID_CODE = 4
+
+    @staticmethod
+    def usage_msg()-> str:
+        return f"Usage: pubsubclient [--topic topic] [server]:port " \
+                "clientid [message]"
+
+    @staticmethod
+    def bad_client_id_msg(clientid: str) -> str:
+        return f"pubsubclient: bad client ID \"{clientid}\""
 
 ### Data Classes ###############################################################
 
@@ -34,22 +44,43 @@ class ClientProgramArgs:
     message: Optional[str] = None
 
 ### Functions ##################################################################
+def print_stderr(message: str):
+    """Helper method for printing a message to stderr."""
+    print(message, file=sys.stderr)
+
+
+def print_stdout(message: str):
+    """Helper method for printing a message to stdout."""
+    print(message, file=sys.stdout)
+
+
+def show_error(error_code: int, **kwargs):
+    """Given an error code, print the matching message"""
+    match error_code:
+        case Errors.USAGE_ERROR_CODE:
+            print_stderr(Errors.usage_msg())
+        case Errors.BAD_CLIENT_ID_CODE:
+            msg = kwargs.get("clientid", "ClientID")
+            print_stderr(Errors.bad_client_id_msg(msg))
+
 
 def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
     """ arugments: [--topic topic] [server]:port clientid [message]
 
     All arguments must happen in this order, if they are specified.
     """
+
     program_args: ClientProgramArgs = ClientProgramArgs()
+    print(arguments)
     
     return program_args
-
-
 
 
 def run_client():
     pass
 
+
+### Main #######################################################################
 
 def main():
 
