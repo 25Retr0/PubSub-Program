@@ -82,69 +82,35 @@ def exit_program(error_code: int) -> None:
 def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
     """ arugments: [--topic topic] [server]:port clientid [message]
     """
+    
+    # Quick check - max and min number of args
+    args_len = len(arguments)
+    if not (Constants.MIN_ARGS <= args_len <= Constants.MAX_ARGS):
+        show_error(Errors.USAGE_ERROR_CODE)
+        exit_program(Errors.USAGE_ERROR_CODE)
+
+
     program_args: ClientProgramArgs = ClientProgramArgs()
 
-    # At most 4 arguments and at least 2 arguments
-    if not (Constants.MIN_ARGS <= len(arguments) <= Constants.MAX_ARGS):
-        show_error(Errors.USAGE_ERROR_CODE)
-        exit_program(Errors.USAGE_ERROR_CODE)
-
-    # parse [--topic topic]
-    # if first argument starts with --, then you need atleast 3 more args
-    args: int = 0
-    if arguments[args] == Constants.TOPIC:
-        # cannot fail as MIN_ARGS == 2 and len(arguments) > 2
-        args += 1
-        program_args.topic = arguments[args]
-
-        # if there are not 2 more arguments atleast, then just exit
-        if (len(arguments) - args) < 2:
-            show_error(Errors.USAGE_ERROR_CODE)
-            exit_program(Errors.USAGE_ERROR_CODE)
-
-        args += 1   # increment for next argument
-
-    elif arguments[args].startswith(Constants.OPTION):
-        show_error(Errors.USAGE_ERROR_CODE)
-        exit_program(Errors.USAGE_ERROR_CODE)
-
-    # parse [server]:port
-    if arguments[args].startswith(Constants.OPTION):
-        show_error(Errors.USAGE_ERROR_CODE)
-        exit_program(Errors.USAGE_ERROR_CODE)
-
-    server, port = arguments[args].split(Constants.COLON)
-    args += 1
-
-    if server.strip(): # not empty
+    # Parsing required arguments --> [server]:port clientid
+    arg: int = 0
+    server, port = arguments[arg].split(Constants.COLON)
+    if server.strip(): # Server is not empty
         program_args.server = server.strip()
 
-    if not port.strip(): # is empty
+    if not port.strip(): # if port is empty
         show_error(Errors.USAGE_ERROR_CODE)
         exit_program(Errors.USAGE_ERROR_CODE)
+    program_args.port = port.strip()
 
-    program_args.port = port
-
-    # parse clientid
-
-    if arguments[args].startswith(Constants.OPTION):
-        show_error(Errors.USAGE_ERROR_CODE)
-        exit_program(Errors.USAGE_ERROR_CODE)
-
-    clientid = arguments[args].strip()
+    arg += 1
+    clientid = arguments[arg].strip()
     if not clientid:
         show_error(Errors.USAGE_ERROR_CODE)
         exit_program(Errors.USAGE_ERROR_CODE)
-
     program_args.clientid = clientid
 
-    if len(arguments) - args == 1: # 1 argument left
-        if arguments[args].startswith(Constants.OPTION):
-            show_error(Errors.USAGE_ERROR_CODE)
-            exit_program(Errors.USAGE_ERROR_CODE)
-
-        program_args.message = arguments[len(arguments) - 1]
-
+    print(program_args)
     return program_args
 
 
