@@ -16,14 +16,7 @@ import sys
 from dataclasses import dataclass
 from typing import Optional
 
-### Constants ##################################################################
-class Constants:
-    OPTION = "--"
-    COLON = ":"
-    TOPIC = "--topic"
-    MIN_ARGS = 2
-    MAX_ARGS = 5
-
+### Error Handler ##############################################################
 class Errors:
     USAGE_ERROR_CODE = 1
     BAD_CLIENT_ID_CODE = 4
@@ -42,7 +35,6 @@ class Errors:
         return f"pubsubclient: Unknown Error Detected"
 
 ### Data Classes ###############################################################
-
 @dataclass()
 class ClientProgramArgs:
     topic: Optional[str] = None
@@ -82,26 +74,48 @@ def exit_program(error_code: int) -> None:
 def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
     """ arugments: [--topic topic] [server]:port clientid [message]
     """
-    
-    # Quick check - max and min number of args
-    args_len = len(arguments)
-    if not (Constants.MIN_ARGS <= args_len <= Constants.MAX_ARGS):
-        show_error(Errors.USAGE_ERROR_CODE)
-        exit_program(Errors.USAGE_ERROR_CODE)
-
-
     program_args: ClientProgramArgs = ClientProgramArgs()
 
-    # Parsing required arguments --> [server]:port clientid
-    arg: int = 0
-    server, port = arguments[arg].split(Constants.COLON)
-    if server.strip(): # Server is not empty
-        program_args.server = server.strip()
+    ## TODO: Add checking for [--topic topic]
+    ## TODO: Add checking for [message]
+    
+    # check length of args after i check if --topic exists
 
-    if not port.strip(): # if port is empty
+    arg: int = 0
+    
+    # if --topic exists -- MIN_ARGS + 2 is needed.
+    args_len = len(arguments)
+    if arguments[arg] == "--topic" and args_len >= 4:
+        arg += 1
+        topic_arg = arguments[arg]
+
+        if topic_arg.strip():
+            show_error(Errors.USAGE_ERROR_CODE)
+            exit_program(Errors.USAGE_ERROR_CODE)
+
+        program_args.topic = topic_arg
+        arg += 1 # move to next argument
+    elif (arguments[arg] == "--topic" and args_len < 4):
         show_error(Errors.USAGE_ERROR_CODE)
         exit_program(Errors.USAGE_ERROR_CODE)
+    elif (arguments[arg].startswith("--")):
+        show_error(Errors.USAGE_ERROR_CODE)
+        exit_program(Errors.USAGE_ERROR_CODE)
+
+    # Now check if length of args is within MAX_ARGS (5)
+    if (args_len > 5):
+        show_error(Errors.USAGE_ERROR_CODE)
+        exit_program(Errors.USAGE_ERROR_CODE)
+
+    # NOTE: While parsing no args (except [message]) can start with '--'
+
+    # Parsing required arguments --> [server]:port clientid
+    server, port = arguments[arg].split(":")
+    program_args.server = server.strip()
     program_args.port = port.strip()
+    if (not port.strip() or not server.strip()): # either is empty
+        show_error(Errors.USAGE_ERROR_CODE)
+        exit_program(Errors.USAGE_ERROR_CODE)
 
     arg += 1
     clientid = arguments[arg].strip()
