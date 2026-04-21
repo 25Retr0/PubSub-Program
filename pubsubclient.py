@@ -133,13 +133,19 @@ def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
 
     if (args_len == 5 and program_args.topic != None):
         # allow message argument
-        program_args.message = arguments[arg].strip()
+        message = arguments[arg].strip()
+
+        if message == '': # is empty
+            show_error(Errors.USAGE_ERROR_CODE)
+            exit_program(Errors.USAGE_ERROR_CODE)
+
+        program_args.message = message
+
     elif (args_len >= 3 and program_args.topic == None):
         # no topic was given do not allow message
         show_error(Errors.USAGE_ERROR_CODE)
         exit_program(Errors.USAGE_ERROR_CODE)
 
-    print(program_args)
     return program_args
 
 
