@@ -16,12 +16,19 @@ import sys
 from dataclasses import dataclass
 from typing import Optional
 
+### Constants ##################################################################
+PROGRAM = "pubsubclient"
+WELCOME_MSG = f"Welcome to {PROGRAM}!"
+
 ### Error Handler ##############################################################
 class Errors:
     USAGE_ERROR_CODE = 1
     BAD_CLIENT_ID_CODE = 4
-    INVALID_TOPIC_CODE = 7
+    INVALID_TOPIC_CODE = 5
     INVALID_MESSAGE_CODE = 6
+    UNABLE_TO_CONNECT_CODE = 7
+    INVALID_SERVER_CODE = 8
+    NON_UNIQUE_ID_CODE = 9
 
     @staticmethod
     def usage_msg()-> str:
@@ -29,20 +36,32 @@ class Errors:
                 "clientid [message]"
 
     @staticmethod
-    def bad_client_id_msg(clientid: str) -> str:
-        return f"pubsubclient: bad client ID \"{clientid}\""
+    def bad_client_id_msg(client_id: str) -> str:
+        return f"{PROGRAM}: bad client ID \"{client_id}\""
 
     @staticmethod
     def invalid_topic_msg(topic: str) -> str:
-        return f"pubsubclient: invalid topic string \"{topic}\""
+        return f"{PROGRAM}: invalid topic string \"{topic}\""
 
     @staticmethod
     def invalid_message_msg() -> str:
-        return f"pubsubclient: messages must only contain printable characters"
+        return f"{PROGRAM}: messages must only contain printable characters"
+
+    @staticmethod
+    def unable_to_connect_msg(server: str, port: str) -> str:
+        return f"{PROGRAM}: unable to connect to \"{server}:{port}\""
+
+    @staticmethod
+    def invalid_server_msg(server: str, port: str) -> str:
+        return f"{PROGRAM}: server at \"{server}:{port}\" is not a valid server"
+
+    @staticmethod
+    def non_unique_id_msg(client_id: str) -> str:
+        return f"{PROGRAM}: client ID \"{client_id}\" is not unique"
 
     @staticmethod
     def unknown_error_msg() -> str:
-        return f"pubsubclient: Unknown Error Detected"
+        return f"{PROGRAM}: Unknown Error Detected"
 
 ### Data Classes ###############################################################
 @dataclass()
@@ -71,19 +90,30 @@ def show_error(error_code: int, **kwargs) -> None:
         case Errors.USAGE_ERROR_CODE:
             print_stderr(Errors.usage_msg())
         case Errors.BAD_CLIENT_ID_CODE:
-            msg = kwargs.get("client_id", "ClientID")
+            msg = kwargs.get("client_id", "CLIENTID")
             print_stderr(Errors.bad_client_id_msg(msg))
         case Errors.INVALID_TOPIC_CODE:
             msg = kwargs.get("topic", "TOPIC")
             print_stderr(Errors.invalid_topic_msg(msg))
         case Errors.INVALID_MESSAGE_CODE:
             print_stderr(Errors.invalid_message_msg())
+        case Errors.UNABLE_TO_CONNECT_CODE:
+            server = kwargs.get("server", "SERVER")
+            port = kwargs.get("port", "PORT")
+            print_stderr(Errors.unable_to_connect_msg(server, port))
+        case Errors.INVALID_SERVER_CODE:
+            server = kwargs.get("server", "SERVER")
+            port = kwargs.get("port", "PORT")
+            print_stderr(Errors.invalid_server_msg(server, port))
+        case Errors.NON_UNIQUE_ID_CODE:
+            msg = kwargs.get("client_id", "CLIENTID")
+            print_stderr(Errors.non_unique_id_msg(msg))
         case _:
             print_stderr(Errors.unknown_error_msg())
 
 def exit_program(error_code: int) -> None:
     """Exit from program with given error_code."""
-    print_stderr(f"\nExited with code '{error_code}'")
+    print_stderr(f"\n--DEBUG--\nExited with code '{error_code}'")
     sys.exit(error_code)
 
 
