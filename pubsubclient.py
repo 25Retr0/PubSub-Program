@@ -76,11 +76,6 @@ def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
     """
     program_args: ClientProgramArgs = ClientProgramArgs()
 
-    ## TODO: Add checking for [--topic topic]
-    ## TODO: Add checking for [message]
-    
-    # check length of args after i check if --topic exists
-
     arg: int = 0
     
     # if --topic exists -- MIN_ARGS + 2 is needed.
@@ -89,7 +84,7 @@ def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
         arg += 1
         topic_arg = arguments[arg]
 
-        if topic_arg.strip():
+        if topic_arg.strip() == '':
             show_error(Errors.USAGE_ERROR_CODE)
             exit_program(Errors.USAGE_ERROR_CODE)
 
@@ -110,19 +105,39 @@ def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
     # NOTE: While parsing no args (except [message]) can start with '--'
 
     # Parsing required arguments --> [server]:port clientid
-    server, port = arguments[arg].split(":")
-    program_args.server = server.strip()
-    program_args.port = port.strip()
-    if (not port.strip() or not server.strip()): # either is empty
+    # First check string contains ":"
+    if not (":" in arguments[arg]):
         show_error(Errors.USAGE_ERROR_CODE)
         exit_program(Errors.USAGE_ERROR_CODE)
 
+    server, port = arguments[arg].split(":")
+    port = port.strip()
+    server = server.strip()
+    if (not port or server.startswith("--")): 
+        show_error(Errors.USAGE_ERROR_CODE)
+        exit_program(Errors.USAGE_ERROR_CODE)
+
+    if server != '':    # Check it was given as it is optional
+        program_args.server = server
+
+    program_args.port = port
+
     arg += 1
     clientid = arguments[arg].strip()
-    if not clientid:
+    if not clientid or clientid.startswith("--"):
         show_error(Errors.USAGE_ERROR_CODE)
         exit_program(Errors.USAGE_ERROR_CODE)
     program_args.clientid = clientid
+
+    arg += 1
+
+    if (args_len == 5 and program_args.topic != None):
+        # allow message argument
+        program_args.message = arguments[arg].strip()
+    elif (args_len >= 3 and program_args.topic == None):
+        # no topic was given do not allow message
+        show_error(Errors.USAGE_ERROR_CODE)
+        exit_program(Errors.USAGE_ERROR_CODE)
 
     print(program_args)
     return program_args
