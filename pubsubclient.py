@@ -20,6 +20,7 @@ from typing import Optional
 class Errors:
     USAGE_ERROR_CODE = 1
     BAD_CLIENT_ID_CODE = 4
+    INVALID_TOPIC_CODE = 7
 
     @staticmethod
     def usage_msg()-> str:
@@ -31,6 +32,10 @@ class Errors:
         return f"pubsubclient: bad client ID \"{clientid}\""
 
     @staticmethod
+    def invalid_topic_msg(topic: str) -> str:
+        return f"pubsubclient: invalid topic string \"{topic}\""
+
+    @staticmethod
     def unknown_error_msg() -> str:
         return f"pubsubclient: Unknown Error Detected"
 
@@ -40,8 +45,9 @@ class ClientProgramArgs:
     topic: Optional[str] = None
     server: str = "localhost"
     port: str | int = -1
-    clientid: str = "PLACEHOLDER"
+    client_id: str | int = "PLACEHOLDER"
     message: Optional[str] = None
+    error: bool = False
 
 ### Functions ##################################################################
 def print_stderr(message: str) -> None:
@@ -60,8 +66,11 @@ def show_error(error_code: int, **kwargs) -> None:
         case Errors.USAGE_ERROR_CODE:
             print_stderr(Errors.usage_msg())
         case Errors.BAD_CLIENT_ID_CODE:
-            msg = kwargs.get("clientid", "ClientID")
+            msg = kwargs.get("client_id", "ClientID")
             print_stderr(Errors.bad_client_id_msg(msg))
+        case Errors.INVALID_TOPIC_CODE:
+            msg = kwargs.get("topic", "TOPIC")
+            print_stderr(Errors.invalid_topic_msg(msg))
         case _:
             print_stderr(Errors.unknown_error_msg())
 
@@ -85,37 +94,28 @@ def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
         topic_arg = arguments[arg]
 
         if topic_arg.strip() == '':
-            show_error(Errors.USAGE_ERROR_CODE)
-            exit_program(Errors.USAGE_ERROR_CODE)
+            program_args.error = True
 
         program_args.topic = topic_arg
         arg += 1 # move to next argument
-    elif (arguments[arg] == "--topic" and args_len < 4):
-        show_error(Errors.USAGE_ERROR_CODE)
-        exit_program(Errors.USAGE_ERROR_CODE)
-    elif (arguments[arg].startswith("--")):
-        show_error(Errors.USAGE_ERROR_CODE)
-        exit_program(Errors.USAGE_ERROR_CODE)
+    elif ((arguments[arg] == "--topic" and args_len < 4)
+        or arguments[arg].startswith("--")):
+        program_args.error = True
 
     # Now check if length of args is within MAX_ARGS (5)
     if (args_len > 5):
-        show_error(Errors.USAGE_ERROR_CODE)
-        exit_program(Errors.USAGE_ERROR_CODE)
-
-    # NOTE: While parsing no args (except [message]) can start with '--'
+        program_args.error = True
 
     # Parsing required arguments --> [server]:port clientid
     # First check string contains ":"
     if not (":" in arguments[arg]):
-        show_error(Errors.USAGE_ERROR_CODE)
-        exit_program(Errors.USAGE_ERROR_CODE)
+        program_args.error = True
 
     server, port = arguments[arg].split(":")
     port = port.strip()
     server = server.strip()
     if (not port or server.startswith("--")): 
-        show_error(Errors.USAGE_ERROR_CODE)
-        exit_program(Errors.USAGE_ERROR_CODE)
+        program_args.error = True
 
     if server != '':    # Check it was given as it is optional
         program_args.server = server
@@ -123,11 +123,10 @@ def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
     program_args.port = port
 
     arg += 1
-    clientid = arguments[arg].strip()
-    if not clientid or clientid.startswith("--"):
-        show_error(Errors.USAGE_ERROR_CODE)
-        exit_program(Errors.USAGE_ERROR_CODE)
-    program_args.clientid = clientid
+    client_id = arguments[arg].strip()
+    if not client_id:
+        program_args.error = True
+    program_args.client_id = client_id
 
     arg += 1
 
@@ -136,22 +135,42 @@ def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
         message = arguments[arg].strip()
 
         if message == '': # is empty
-            show_error(Errors.USAGE_ERROR_CODE)
-            exit_program(Errors.USAGE_ERROR_CODE)
+            program_args.error = True
 
         program_args.message = message
 
     elif (args_len >= 3 and program_args.topic == None):
-        # no topic was given do not allow message
-        show_error(Errors.USAGE_ERROR_CODE)
-        exit_program(Errors.USAGE_ERROR_CODE)
-
+        program_args.error = True
+    
     return program_args
 
 
-def run_client():
-    pass
+def isValidClientId(program_args: ClientProgramArgs) -> bool:
+    """Given a ClientProgramArgs object: 
+        - take ClientProgramArgs.client_id
+        - check it is an integer between 2 and 32 (inclusive).
+      Updates ClientProgramArgs.client_id if condition is met and returns True,
+      otherwise False
+    """
+    try:
+        client_id = int(program_args.client_id)
+        if 2 <= client_id <= 32:
+            program_args.client_id = client_id
+            return True
 
+        return False
+    except ValueError:
+        return False
+
+
+def isValidTopic(topic: str) -> bool:
+    """ A valid topic string consists of:
+        - Start with a letter (upper or lower)
+        - consist of letters, numbers, spaces, and/or '/' (forward slash)
+        Returns True if conditions met, otherwise False
+    """
+
+    return False
 
 ### Main #######################################################################
 
@@ -159,10 +178,19 @@ def main():
 
     ## Command line argument parsing
     arguments: ClientProgramArgs = parse_arguments(sys.argv[1:])
+    if arguments.error:
+        show_error(Errors.USAGE_ERROR_CODE)
+        exit_program(Errors.USAGE_ERROR_CODE)
 
     ## Client ID Checking
+    if not isValidClientId(arguments):
+        show_error(Errors.BAD_CLIENT_ID_CODE, client_id=arguments.client_id)
+        exit_program(Errors.BAD_CLIENT_ID_CODE)
 
     ## Topic Checking
+    if arguments.topic != None and not isValidTopic(arguments.topic):
+        show_error(Errors.INVALID_TOPIC_CODE, topic=arguments.topic)
+        exit_program(Errors.INVALID_TOPIC_CODE)
 
     ## Message Checking
 
@@ -173,7 +201,6 @@ def main():
     ## Client Uniqueness Checking
 
     ## Client Runtime Behaviour
-    run_client()
 
 
     pass
