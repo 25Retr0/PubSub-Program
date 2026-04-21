@@ -21,6 +21,7 @@ class Errors:
     USAGE_ERROR_CODE = 1
     BAD_CLIENT_ID_CODE = 4
     INVALID_TOPIC_CODE = 7
+    INVALID_MESSAGE_CODE = 6
 
     @staticmethod
     def usage_msg()-> str:
@@ -36,6 +37,10 @@ class Errors:
         return f"pubsubclient: invalid topic string \"{topic}\""
 
     @staticmethod
+    def invalid_message_msg() -> str:
+        return f"pubsubclient: messages must only contain printable characters"
+
+    @staticmethod
     def unknown_error_msg() -> str:
         return f"pubsubclient: Unknown Error Detected"
 
@@ -45,7 +50,7 @@ class ClientProgramArgs:
     topic: Optional[str] = None
     server: str = "localhost"
     port: str | int = -1
-    client_id: str | int = "PLACEHOLDER"
+    client_id: str = "PLACEHOLDER"
     message: Optional[str] = None
     error: bool = False
 
@@ -71,6 +76,8 @@ def show_error(error_code: int, **kwargs) -> None:
         case Errors.INVALID_TOPIC_CODE:
             msg = kwargs.get("topic", "TOPIC")
             print_stderr(Errors.invalid_topic_msg(msg))
+        case Errors.INVALID_MESSAGE_CODE:
+            print_stderr(Errors.invalid_message_msg())
         case _:
             print_stderr(Errors.unknown_error_msg())
 
@@ -145,22 +152,13 @@ def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
     return program_args
 
 
-def isValidClientId(program_args: ClientProgramArgs) -> bool:
-    """Given a ClientProgramArgs object: 
+def isValidClientId(client_id: str) -> bool:
+    """Given a ClientProgramArgs object, returns True if:
         - take ClientProgramArgs.client_id
-        - check it is an integer between 2 and 32 (inclusive).
-      Updates ClientProgramArgs.client_id if condition is met and returns True,
-      otherwise False
+        - must be between 2 and 32 characters (inclusive) in length.
+        - contain only letters and/or digits
     """
-    try:
-        client_id = int(program_args.client_id)
-        if 2 <= client_id <= 32:
-            program_args.client_id = client_id
-            return True
-
-        return False
-    except ValueError:
-        return False
+    return ((2 <= len(client_id) <=32) and client_id.isalnum());
 
 
 def isValidTopic(topic: str) -> bool:
@@ -182,6 +180,11 @@ def isValidTopic(topic: str) -> bool:
     
     return True
 
+
+def isValidMessage(message: str) -> bool:
+    """Returns True if the given message is printable. Otherwise False."""
+    return message.isprintable()
+
 ### Main #######################################################################
 
 def main():
@@ -193,16 +196,19 @@ def main():
         exit_program(Errors.USAGE_ERROR_CODE)
 
     ## Client ID Checking
-    if not isValidClientId(arguments):
+    if not isValidClientId(arguments.client_id):
         show_error(Errors.BAD_CLIENT_ID_CODE, client_id=arguments.client_id)
         exit_program(Errors.BAD_CLIENT_ID_CODE)
 
     ## Topic Checking
-    if arguments.topic != None and not isValidTopic(arguments.topic):
+    if arguments.topic and not isValidTopic(arguments.topic):
         show_error(Errors.INVALID_TOPIC_CODE, topic=arguments.topic)
         exit_program(Errors.INVALID_TOPIC_CODE)
 
     ## Message Checking
+    if arguments.message and not isValidMessage(arguments.message):
+        show_error(Errors.INVALID_MESSAGE_CODE)
+        exit_program(Errors.INVALID_MESSAGE_CODE)
 
     ## Connection Checking
 
