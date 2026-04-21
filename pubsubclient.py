@@ -170,7 +170,17 @@ def isValidTopic(topic: str) -> bool:
         Returns True if conditions met, otherwise False
     """
 
-    return False
+    # Check start character is a letter
+    start_letter = topic[0]     # No index error -> non-empty from parsing
+    if not start_letter.isalpha():
+        return False
+
+    # Check remaining characters follow rules
+    for char in topic:
+        if char.isalnum() or char in [' ', '/']: continue
+        return False
+    
+    return True
 
 ### Main #######################################################################
 
