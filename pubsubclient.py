@@ -1,4 +1,4 @@
-""" ! @file pubsubclient.py
+"""! @file pubsubclient.py
 @author William Kelly (s4882158)
 @ai Not Used
 """
@@ -20,6 +20,16 @@ from typing import Optional
 PROGRAM = "pubsubclient"
 WELCOME_MSG = f"Welcome to {PROGRAM}!"
 
+### Data Classes ###############################################################
+@dataclass()
+class ClientProgramArgs:
+    port: str = ""
+    client_id: str = ""
+    topic: Optional[str] = None
+    server: str = "localhost"
+    message: Optional[str] = None
+    error: bool = False
+
 ### Error Handler ##############################################################
 class Errors:
     USAGE_ERROR_CODE = 1
@@ -32,7 +42,7 @@ class Errors:
 
     @staticmethod
     def usage_msg()-> str:
-        return f"Usage: pubsubclient [--topic topic] [server]:port " \
+        return f"Usage: {PROGRAM} [--topic topic] [server]:port " \
                 "clientid [message]"
 
     @staticmethod
@@ -63,17 +73,8 @@ class Errors:
     def unknown_error_msg() -> str:
         return f"{PROGRAM}: Unknown Error Detected"
 
-### Data Classes ###############################################################
-@dataclass()
-class ClientProgramArgs:
-    topic: Optional[str] = None
-    server: str = "localhost"
-    port: str | int = -1
-    client_id: str = "PLACEHOLDER"
-    message: Optional[str] = None
-    error: bool = False
-
 ### Functions ##################################################################
+
 def print_stderr(message: str) -> None:
     """Helper method for printing a message to stderr."""
     print(message, file=sys.stderr)
@@ -111,6 +112,7 @@ def show_error(error_code: int, **kwargs) -> None:
         case _:
             print_stderr(Errors.unknown_error_msg())
 
+
 def exit_program(error_code: int) -> None:
     """Exit from program with given error_code."""
     print_stderr(f"\n--DEBUG--\nExited with code '{error_code}'")
@@ -118,8 +120,7 @@ def exit_program(error_code: int) -> None:
 
 
 def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
-    """ arugments: [--topic topic] [server]:port clientid [message]
-    """
+    """ arugments: [--topic topic] [server]:port clientid [message]"""
     program_args: ClientProgramArgs = ClientProgramArgs()
 
     arg: int = 0
@@ -215,8 +216,9 @@ def isValidMessage(message: str) -> bool:
     """Returns True if the given message is printable. Otherwise False."""
     return message.isprintable()
 
-### Main #######################################################################
 
+
+### Main #######################################################################
 def main():
 
     ## Command line argument parsing
