@@ -13,6 +13,7 @@ the server.
 """
 
 import sys
+import socket
 from dataclasses import dataclass
 from typing import Optional
 
@@ -28,6 +29,11 @@ class ClientProgramArgs:
     topic: Optional[str] = None
     server: str = "localhost"
     message: Optional[str] = None
+    error: bool = False
+
+@dataclass()
+class Connection:
+    socket: socket.socket
     error: bool = False
 
 ### Error Handler ##############################################################
@@ -217,6 +223,27 @@ def isValidMessage(message: str) -> bool:
     return message.isprintable()
 
 
+def attemptConnection(server: str, port: str) -> Connection:
+    """Attempt connection to server:port given from command line arguments.
+    If unsuccessful return Connection object with error flag."""
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    connection: Connection = Connection(sock)
+    try:
+        serverAddr = socket.getaddrinfo(
+            server, port, socket.AF_INET, socket.SOCK_STREAM
+        )
+
+        connection.socket.connect(serverAddr[0][4])
+    except Exception as e:
+        connection.error = True
+
+    return connection
+
+
+def runClient():
+    """."""
+    pass
 
 ### Main #######################################################################
 def main():
@@ -243,12 +270,19 @@ def main():
         exit_program(Errors.INVALID_MESSAGE_CODE)
 
     ## Connection Checking
+    connection: Connection = attemptConnection(arguments.server, arguments.port)
+    if connection.error:
+        server = arguments.server
+        port = arguments.port
+        show_error(Errors.UNABLE_TO_CONNECT_CODE, server=server, port=port)
+        exit_program(Errors.UNABLE_TO_CONNECT_CODE)
 
     ## Server Validity Checking
 
     ## Client Uniqueness Checking
 
     ## Client Runtime Behaviour
+    runClient()
 
 
     pass
