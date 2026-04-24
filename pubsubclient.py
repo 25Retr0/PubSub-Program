@@ -139,38 +139,53 @@ def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
 
         if topic_arg.strip() == '':
             program_args.error = True
+            return program_args
 
         program_args.topic = topic_arg
         arg += 1 # move to next argument
     elif ((arguments[arg] == "--topic" and args_len < 4)
         or arguments[arg].startswith("--")):
         program_args.error = True
+        return program_args
 
     # Now check if length of args is within MAX_ARGS (5)
     if (args_len > 5):
         program_args.error = True
+        return program_args
 
-    # Parsing required arguments --> [server]:port clientid
+    if args_len - arg < 2: # not enough arguments left
+        program_args.error = True
+        return program_args
+
+    ## SERVER:PORT
     # First check string contains ":"
+
     if not (":" in arguments[arg]):
         program_args.error = True
+        return program_args
 
     server, port = arguments[arg].split(":")
     port = port.strip()
     server = server.strip()
     if (not port or server.startswith("--")): 
         program_args.error = True
+        return program_args
 
     if server != '':    # Check it was given as it is optional
         program_args.server = server
 
     program_args.port = port
 
+    ## CLIENT ID
+
     arg += 1
     client_id = arguments[arg].strip()
     if not client_id:
         program_args.error = True
+        return program_args
     program_args.client_id = client_id
+
+    ## MESSAGE
 
     arg += 1
 
@@ -235,15 +250,16 @@ def attemptConnection(server: str, port: str) -> Connection:
         )
 
         connection.socket.connect(serverAddr[0][4])
-    except Exception as e:
+    except Exception:
         connection.error = True
 
     return connection
 
 
 def runClient():
-    """."""
-    pass
+    """Handle runtime behaviour for client."""
+    print_stdout(WELCOME_MSG)
+
 
 ### Main #######################################################################
 def main():
@@ -283,9 +299,6 @@ def main():
 
     ## Client Runtime Behaviour
     runClient()
-
-
-    pass
 
 if __name__ == "__main__":
     main()
