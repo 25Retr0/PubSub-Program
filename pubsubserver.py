@@ -15,7 +15,7 @@ from the server.
 from re import error
 import sys
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional
 
 ### Constants ##################################################################
 PROGRAM = "pubsubserver"
@@ -28,11 +28,10 @@ class Server:
     server: str = "localhost"
 
 
-@dataclass()
 class ServerProgramArgs:
     server_id: str = ""
     listenOnPort: Optional[str] = None
-    servers: Optional[List[Server]] = None
+    servers: list[Server] = []
     error: bool = False
 
 
@@ -83,8 +82,71 @@ def exit_program(error_code: int) -> None:
 
 
 def parse_arguments(arguments: list[str]) -> ServerProgramArgs:
-    """ """
+    """ arguments: [--server [server]:port]... [--listenon listenport] server_id
+
+    ... means can be specified multiple times
+    option arguments can be in any order. But prior to serverid
+    """
     program_args: ServerProgramArgs = ServerProgramArgs()
+
+    if len(arguments) < 1:
+        program_args.error = True
+        return program_args
+    
+    # parse arguements up to last argument
+    option_args: list[str] = arguments[:-1]
+    last_arg: str = arguments[-1]
+
+    seenListenOnOpt: bool = False
+
+    i: int = 0
+    while i < len(option_args):
+        arg: str = option_args[i]
+
+        if arg == "--server":
+            i += 1  # consume next argument
+            
+            if i >= len(option_args):
+                program_args.error = True
+                return program_args
+
+            serv_port = option_args[i].strip() # check this is allowed
+            if not ":" in serv_port or serv_port.startswith("--"):
+                program_args.error = True
+                return program_args
+
+            server, port = serv_port.split(":")
+            if not port.strip():
+                program_args.error = True
+                return program_args
+
+            s: Server = Server(port, server=(server or "localhost"))
+            program_args.servers.append(s)
+
+        elif arg == "--listenon" and not seenListenOnOpt:
+            seenListenOnOpt = True
+            i += 1   # consume next argument
+
+            if i >= len(option_args):
+                program_args.error = True
+                return program_args
+
+            port = option_args[i].strip() # check this is allowed (index)
+            if not port or port.startswith("--"):
+                program_args.error = True
+                return program_args
+            program_args.listenOnPort = port
+
+        else: # Not allowed argument
+            program_args.error = True
+            return program_args
+
+        i += 1
+
+    # last argument is server_id
+    program_args.server_id = last_arg.strip()
+    if not program_args.server_id:
+        program_args.error = True
 
     return program_args
 
