@@ -14,6 +14,7 @@ the server.
 
 import sys
 import socket
+from pubsubshared import isValidId
 from dataclasses import dataclass
 from typing import Optional
 
@@ -200,17 +201,8 @@ def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
 
     elif (args_len >= 3 and program_args.topic == None):
         program_args.error = True
-    
+
     return program_args
-
-
-def isValidClientId(client_id: str) -> bool:
-    """Given a ClientProgramArgs object, returns True if:
-        - take ClientProgramArgs.client_id
-        - must be between 2 and 32 characters (inclusive) in length.
-        - contain only letters and/or digits
-    """
-    return ((2 <= len(client_id) <=32) and client_id.isalnum());
 
 
 def isValidTopic(topic: str) -> bool:
@@ -271,7 +263,7 @@ def main():
         exit_program(Errors.USAGE_ERROR_CODE)
 
     ## Client ID Checking
-    if not isValidClientId(arguments.client_id):
+    if not isValidId(arguments.client_id):
         show_error(Errors.BAD_CLIENT_ID_CODE, client_id=arguments.client_id)
         exit_program(Errors.BAD_CLIENT_ID_CODE)
 
