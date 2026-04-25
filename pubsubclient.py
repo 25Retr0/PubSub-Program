@@ -14,7 +14,7 @@ the server.
 
 import sys
 import socket
-from pubsubshared import isValidId
+from pubsubshared import isValidId, Connection
 from dataclasses import dataclass
 from typing import Optional
 
@@ -32,10 +32,6 @@ class ClientProgramArgs:
     message: Optional[str] = None
     error: bool = False
 
-@dataclass()
-class Connection:
-    socket: socket.socket
-    error: bool = False
 
 ### Error Handler ##############################################################
 class Errors:
@@ -230,18 +226,27 @@ def isValidMessage(message: str) -> bool:
     return message.isprintable()
 
 
-def attemptConnection(server: str, port: str) -> Connection:
-    """Attempt connection to server:port given from command line arguments.
+def attemptConnection(server: str, serv_port: str) -> Connection:
+    """Attempt connection to server:port given from command line arguments.sock. bind(('', port))
+except Exception
     If unsuccessful return Connection object with error flag."""
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     connection: Connection = Connection(sock)
+
+    if serv_port is None:
+        port = 0
+    elif serv_port.isdigit():
+        port = int(serv_port)
+    else:
+        port = serv_port
+
     try:
         serverAddr = socket.getaddrinfo(
             server, port, socket.AF_INET, socket.SOCK_STREAM
         )
 
-        connection.socket.connect(serverAddr[0][4])
+        connection.sock.connect(serverAddr[0][4])
     except Exception:
         connection.error = True
 

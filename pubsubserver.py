@@ -12,10 +12,11 @@ will need to be able to simultaneously handle messages from stdin and
 from the server.
 """
 
-from re import error
 import sys
+import socket
 from dataclasses import dataclass
 from typing import Optional
+from pubsubshared import isValidId, Connection
 
 ### Constants ##################################################################
 PROGRAM = "pubsubserver"
@@ -39,6 +40,7 @@ class ServerProgramArgs:
 class Errors:
     USAGE_ERROR_CODE = 1
     BAD_SERVER_ID = 2
+    UNABLE_TO_LISTEN = 3
 
     @staticmethod
     def usage_msg() -> str:
@@ -48,6 +50,10 @@ class Errors:
     @staticmethod
     def bad_server_id_msg(server_id) -> str:
         return f"{PROGRAM}: bad server ID \"{server_id}\""
+
+    @staticmethod
+    def unable_to_listen_msg(port) -> str:
+        return f"{PROGRAM}: can't listen on port \"{port}\""
 
     @staticmethod
     def unknown_error_msg() -> str:
@@ -71,6 +77,12 @@ def show_error(error_code: int, **kwargs) -> None:
     match error_code:
         case Errors.USAGE_ERROR_CODE:
             print_stderr(Errors.usage_msg())
+        case Errors.BAD_SERVER_ID:
+            server_id = kwargs.get("id", "SERVER")
+            print_stderr(Errors.bad_server_id_msg(server_id))
+        case Errors.UNABLE_TO_LISTEN:
+            port = kwargs.get("port", "PORT")
+            print_stderr(Errors.unable_to_listen_msg(port))
         case _:
             print_stderr(Errors.unknown_error_msg())
 
@@ -151,6 +163,34 @@ def parse_arguments(arguments: list[str]) -> ServerProgramArgs:
     return program_args
 
 
+def attempt_listen(serv_port: str | None) -> Connection:
+    """."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    connection: Connection = Connection(sock)
+
+
+    try:
+        if serv_port is None:
+            port = 0
+        elif serv_port.isdigit():
+            port = int(serv_port)
+        else:
+            addr = socket.getaddrinfo(
+                None, serv_port, socket.AF_INET, socket.SOCK_STREAM
+            )
+            connection.sock.bind(addr[0][4])
+            connection.port = connection.sock.getsockname()[1]
+            return connection
+
+        connection.sock.bind(("", port))
+        connection.port = connection.sock.getsockname()[1]
+
+    except Exception as e:
+        connection.error = True
+
+    return connection
+
+
 ### MAIN #######################################################################
 def main():
     
@@ -160,7 +200,21 @@ def main():
         show_error(Errors.USAGE_ERROR_CODE)
         exit_program(Errors.USAGE_ERROR_CODE)
 
+    ## Server ID Checking
+    if not isValidId(arguments.server_id):
+        show_error(Errors.BAD_SERVER_ID)
+        exit_program(Errors.BAD_SERVER_ID)
 
+    ## Server Listening
+    port_connection: Connection = attempt_listen(arguments.listenOnPort)
+    if port_connection.error:
+        show_error(Errors.UNABLE_TO_LISTEN,
+                   port=(arguments.listenOnPort or port_connection.port))
+        exit_program(Errors.UNABLE_TO_LISTEN)
+
+    ## Connecting to Peer Servers
+
+    ## Server Runtime Behaviour
 
 
 if __name__ == "__main__":

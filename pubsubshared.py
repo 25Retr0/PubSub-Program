@@ -3,7 +3,16 @@
 @ai Not Used
 """
 
-from typing import Optional
+import socket
+from dataclasses import dataclass
+from typing import Optional 
+
+### Data Classes ###############################################################
+@dataclass
+class Connection:
+    sock: socket.socket
+    error: bool = False
+    port: str | int | None = None
 
 ### Functions ##################################################################
 
