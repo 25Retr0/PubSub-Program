@@ -14,9 +14,10 @@ the server.
 
 import sys
 import socket
-from pubsubshared import isValidId, Connection
+from pubsubshared import *
 from dataclasses import dataclass
 from typing import Optional
+from threading import Lock, Thread, current_thread
 
 ### Constants ##################################################################
 PROGRAM = "pubsubclient"
@@ -31,6 +32,10 @@ class ClientProgramArgs:
     server: str = "localhost"
     message: Optional[str] = None
     error: bool = False
+
+
+class Commands:
+    pass
 
 
 ### Error Handler ##############################################################
@@ -78,15 +83,6 @@ class Errors:
 
 ### Functions ##################################################################
 
-def print_stderr(message: str) -> None:
-    """Helper method for printing a message to stderr."""
-    print(message, file=sys.stderr)
-
-
-def print_stdout(message: str) -> None:
-    """Helper method for printing a message to stdout."""
-    print(message, file=sys.stdout)
-
 
 def show_error(error_code: int, **kwargs) -> None:
     """Given an error code, print the matching message"""
@@ -130,7 +126,10 @@ def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
     
     # if --topic exists -- MIN_ARGS + 2 is needed.
     args_len = len(arguments)
-    if arguments[arg] == "--topic" and args_len >= 4:
+    if args_len == 0:
+        program_args.error = True
+        return program_args
+    elif arguments[arg] == "--topic" and args_len >= 4:
         arg += 1
         topic_arg = arguments[arg]
 
@@ -201,7 +200,7 @@ def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
     return program_args
 
 
-def isValidTopic(topic: str) -> bool:
+def is_valid_topic(topic: str) -> bool:
     """ A valid topic string consists of:
         - Start with a letter (upper or lower)
         - consist of letters, numbers, spaces, and/or '/' (forward slash)
@@ -226,7 +225,7 @@ def isValidMessage(message: str) -> bool:
     return message.isprintable()
 
 
-def attemptConnection(server: str, serv_port: str) -> Connection:
+def attempt_connection(server: str, serv_port: str) -> Connection:
     """Attempt connection to server:port given from command line arguments.sock. bind(('', port))
 except Exception
     If unsuccessful return Connection object with error flag."""
@@ -234,14 +233,14 @@ except Exception
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     connection: Connection = Connection(sock)
 
-    if serv_port is None:
-        port = 0
-    elif serv_port.isdigit():
-        port = int(serv_port)
-    else:
-        port = serv_port
 
+    ## NOTE: If any connection errors happen, might be because getaddrinfo
     try:
+        if serv_port.isdigit():
+            port = int(serv_port)
+        else:
+            port = serv_port
+
         serverAddr = socket.getaddrinfo(
             server, port, socket.AF_INET, socket.SOCK_STREAM
         )
@@ -253,9 +252,47 @@ except Exception
     return connection
 
 
-def runClient():
-    """Handle runtime behaviour for client."""
+def receive_handler(sock: socket.socket) -> None:
+    """Receive messages from the server and process."""
+
+    while True:
+        try:
+            message = sock.recv(1024).decode()
+            if message:
+                print_stdout(f"\r[Server] {message}\n")
+        except:
+            print_stderr("Connection Lost\n")
+            break
+
+
+def client_message_handler(sock: socket.socket) -> None:
+    """Read lines from stdin and process."""
+    print("Connected")
+    while True:
+        msg = input("Me: ")
+        if msg.lower() == "exit":
+            break
+
+        if msg:
+            sock.send(msg.encode())
+
+
+def runClient(connection: Connection) -> None:
+    """Handle runtime behaviour for client.
+    Creates read thread that receives messages from server socket.
+    Handles sending messages through server socket."""
+
     print_stdout(WELCOME_MSG)
+    sock = connection.sock
+
+    # Create receiving thread for handling messages from connection socket
+    # WARNING: Please put a reference to this. Docs page probably
+    Thread(target=receive_handler, args=(sock,), daemon=True).start()
+
+    # Now continuously read input from stdin
+    client_message_handler(sock)
+
+    sock.close()
 
 
 ### Main #######################################################################
@@ -273,7 +310,7 @@ def main():
         exit_program(Errors.BAD_CLIENT_ID_CODE)
 
     ## Topic Checking
-    if arguments.topic and not isValidTopic(arguments.topic):
+    if arguments.topic and not is_valid_topic(arguments.topic):
         show_error(Errors.INVALID_TOPIC_CODE, topic=arguments.topic)
         exit_program(Errors.INVALID_TOPIC_CODE)
 
@@ -283,19 +320,25 @@ def main():
         exit_program(Errors.INVALID_MESSAGE_CODE)
 
     ## Connection Checking
-    connection: Connection = attemptConnection(arguments.server, arguments.port)
+    connection: Connection = attempt_connection(arguments.server, arguments.port)
     if connection.error:
         server = arguments.server
         port = arguments.port
         show_error(Errors.UNABLE_TO_CONNECT_CODE, server=server, port=port)
         exit_program(Errors.UNABLE_TO_CONNECT_CODE)
 
+    ## Client Runtime Behaviour
+    runClient(connection)
+
+
     ## Server Validity Checking
+    #### TODO: MAKE PROTOCOL HERE
+    # is_compatible = isCompatibleServer(connection.sock)
+    # if not is_compatible:
+    #     show_error(Errors.INVALID_SERVER_CODE)
+    #     exit_program(Errors.INVALID_SERVER_CODE)
 
     ## Client Uniqueness Checking
-
-    ## Client Runtime Behaviour
-    runClient()
 
 if __name__ == "__main__":
     main()
