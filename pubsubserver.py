@@ -12,27 +12,33 @@ will need to be able to simultaneously handle messages from stdin and
 from the server.
 """
 
+import json
 import sys
 import socket
 from dataclasses import dataclass
 from typing import Optional
-from threading import Lock, Thread, current_thread
+from threading import Lock, Thread
 from pubsubshared import *
-from time import sleep ## NOTE: TESTING PURPOSES ONLY
 
 ### Constants ##################################################################
 PROGRAM = "pubsubserver"
 QUEUED_CONNS = 5            # NOTE: This can be increased if needed.
 
-
-clients: list[socket.socket] = []                # WARNING: idk if this should just sit here
-
-### Data Classes $##############################################################
+### Data Classes ###############################################################
 @dataclass()
 class Server:
     port: str
     server: str = "localhost"
 
+
+@dataclass()
+class ServErrCode:
+    OK_CODE = 0
+    DUP_CLIENT_CODE = 1
+    UNKNOWN_CLIENT_CODE = 2
+
+
+### Classes $$$$$###############################################################
 
 class ServerProgramArgs:
     server_id: str = ""
@@ -74,7 +80,74 @@ class PeerConnections:
     @staticmethod
     def show_received_peer_connection_msg(serverid: str) -> None:
         print_stdout(f"{PROGRAM}: Connection received from peer \"{serverid}\"")
-    
+
+
+class ClientConnection():
+    def __init__(self, sock: socket.socket, id: str):
+        self.sock = sock
+        self.id = id
+        self.topics = []
+
+
+class Commands:
+    pass
+
+
+class PubSubServer:
+
+    def __init__(self, server_id: str):
+        self._lock = Lock()
+        self.id = server_id
+        self.commands = Commands()
+        self.messenger = MessageProtocol(is_server=True, id=self.id)
+        self.clients: list[ClientConnection] = []
+
+
+    def close_client_connection(self, client: ClientConnection) -> bool:
+        with self._lock:
+            for c in self.clients:
+                if client == c:
+                    c.sock.close()
+                    return True
+
+        return False
+
+    def get_clients(self) -> list[ClientConnection]:
+        with self._lock:
+            return list(self.clients)
+
+    def add_client(self, client: ClientConnection) -> None:
+        with self._lock:
+            self.clients.append(client)
+
+    def is_duplicate_client_id(self, id: str) -> bool:
+        for client in self.clients:
+            if client.id == id:
+                return True
+        return False
+
+    '''Messages for - Handling Standard Input'''
+
+
+    '''Messages for - Handling messages from Clients and Peer Servers'''
+    def show_client_connected_msg(self, client_id: str) -> None:
+        print_stdout(f"{PROGRAM}: Client \"{client_id}\" has connected")
+
+    def show_client_duplicate_msg(self, client_id: str) -> None:
+        print_stdout(f"{PROGRAM}: Client ID \"{client_id}\" would be " \
+            "duplicated - aborting connection")
+
+    def show_unknown_client_msg(self) -> None:
+        print_stdout(f"{PROGRAM}: Connection with unknown client aborted")
+
+    def show_client_disconnect(self, client_id: str) -> None:
+        print_stdout(f"{PROGRAM}: Client \"{client_id}\" has disconnected")
+
+    def show_peer_shutdown_warning(self, server_id: str) -> None:
+        print_stdout(f"{PROGRAM}: Peer server \"{server_id}\" shutting down")
+
+    def show_peer_disconnected(self, server_id: str) -> None:
+        print_stdout(f"{PROGRAM}: Peer server \"{server_id}\" disconnected")
 
 ### Error Handler ##############################################################
 class Errors:
@@ -239,13 +312,58 @@ def connectToPeers(peer_servers: list[Server]) -> PeerConnections | None:
     return None
 
 
-def handle_client(client_socket, client_address):
+def handle_initial_conection(
+        sock: socket.socket, server: PubSubServer) -> tuple[int, ClientConnection | None]:
+    sock.settimeout(0.8)
+    data = sock.recv(4)
+    success, msg_len = MessageProtocol.decode_len_msg(data)
+    if not success:
+        sock.close()
+        server.show_unknown_client_msg()
+        return (ServErrCode.UNKNOWN_CLIENT_CODE, None)
+
+    raw_msg = sock.recv(msg_len)
+    decoded_msg = MessageProtocol.decode_msg(raw_msg)
+
+    # Attempt msg decode to json
+    try:
+        msg_data = json.loads(decoded_msg)
+        header = msg_data["header"]
+        #client_type = msg_data["type_flag"] # used when doing peer connections
+        client_id = msg_data["id"]
+
+        if header != "1588":
+            server.show_unknown_client_msg()
+            return (ServErrCode.UNKNOWN_CLIENT_CODE, None)
+        elif server.is_duplicate_client_id(client_id):
+            server.show_client_duplicate_msg(client_id)
+            return (ServErrCode.DUP_CLIENT_CODE, None)
+
+        client: ClientConnection = ClientConnection(sock, client_id)
+        server.add_client(client)
+        return (ServErrCode.OK_CODE, client)
+        
+    except json.JSONDecodeError:
+        server.show_unknown_client_msg()
+        return (ServErrCode.UNKNOWN_CLIENT_CODE, None)
+
+
+def handle_client(sock: socket.socket, server: PubSubServer):
     # continuously receive data
     # based on message (recv) decide on
     #### broadcasting, or
     #### reply to client,
     #### or if peer, do more
-    clients.append(client_socket)
+
+    err_code, client = handle_initial_conection(sock, server)
+    if err_code or client == None: 
+
+        # Potentially send message to client
+
+        sock.close()
+        return
+
+    server.show_client_connected_msg(client.id)
 
 
 def handle_server_commands():
@@ -253,27 +371,26 @@ def handle_server_commands():
         admin_msg = input ("[ADMIN CMD]: ")
         if admin_msg == "/shutdown":
             break
-        else:
-            for c in clients:
-                try:
-                    c.send(admin_msg.encode())
-                except:
-                    clients.remove(c)
+    pass
 
-def process_connections(port_connection: Connection):
+def process_connections(port_connection: Connection, server: PubSubServer):
     """Continuously listen for new connections."""
     listening_socket = port_connection.sock
     while True:
-        client_socket, client_addr = listening_socket.accept()
+        client_socket, _ = listening_socket.accept()
         client_thread = Thread(target=handle_client, 
-                               args=(client_socket, client_addr))
+                               args=(client_socket, server))
         client_thread.start()
 
 
-def runServer(port_conn: Connection):
+def runServer(port_conn: Connection, server: PubSubServer):
     # Make server stdin processing thread    
-    Thread(target=handle_server_commands, daemon=True).start()
-    process_connections(port_conn)
+    Thread(
+        target=process_connections,
+        args=(port_conn,server,), 
+        daemon=True
+    ).start()
+    handle_server_commands()
 
 
 ### MAIN #######################################################################
@@ -301,10 +418,11 @@ def main():
     print_stderr(f"{PROGRAM}: listening on port {port_connection.port}") 
 
     ## Connecting to Peer Servers
-    peer_connections: PeerConnections | None = connectToPeers(arguments.servers)
+    # peer_connections: PeerConnections | None = connectToPeers(arguments.servers)
 
     ## Server Runtime Behaviour
-    runServer(port_connection)
+    server: PubSubServer = PubSubServer(arguments.server_id)
+    runServer(port_connection, server)
 
 if __name__ == "__main__":
     main()

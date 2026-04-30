@@ -34,8 +34,31 @@ class ClientProgramArgs:
     error: bool = False
 
 
+### Classes ####################################################################
 class Commands:
-    pass
+    subscribe = "/subscribe"
+    subscribe_usage = f"{subscribe} topic [filter]"
+    
+    def unknown_command_msg(self) -> str:
+        return f"{PROGRAM}: unknown command"
+
+    def unknown_argumemts_msg(self, command: str) -> str:
+        return f"{PROGRAM}: unknown arguments(s) - usage: " \
+            "{cls.get_usage_cmd(command)}"
+    
+
+    def get_usage_cmd(self, command: str) -> str:
+        match command:
+            case self.subscribe: return self.subscribe_usage
+            case _: return "Unknown usage"
+
+class Client:
+    def __init__(self, client_id):
+        self.client_id = client_id
+        self.commands = Commands()
+        self.messenger = MessageProtocol(is_server=False, id=self.client_id)
+
+
 
 
 ### Error Handler ##############################################################
@@ -81,8 +104,7 @@ class Errors:
     def unknown_error_msg() -> str:
         return f"{PROGRAM}: Unknown Error Detected"
 
-### Functions ##################################################################
-
+### Helper Functions ###########################################################
 
 def show_error(error_code: int, **kwargs) -> None:
     """Given an error code, print the matching message"""
@@ -117,6 +139,8 @@ def exit_program(error_code: int) -> None:
     print_stderr(f"\n--DEBUG--\nExited with code '{error_code}'")
     sys.exit(error_code)
 
+
+### Program Functions ##########################################################
 
 def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
     """ arugments: [--topic topic] [server]:port clientid [message]"""
@@ -225,16 +249,16 @@ def isValidMessage(message: str) -> bool:
     return message.isprintable()
 
 
+### Networking Functions #######################################################
 def attempt_connection(server: str, serv_port: str) -> Connection:
-    """Attempt connection to server:port given from command line arguments.sock. bind(('', port))
-except Exception
+    """Attempt connection to server:port given from command line
     If unsuccessful return Connection object with error flag."""
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     connection: Connection = Connection(sock)
 
 
-    ## NOTE: If any connection errors happen, might be because getaddrinfo
+    ## WARNING: If any connection errors happen, might be because getaddrinfo
     try:
         if serv_port.isdigit():
             port = int(serv_port)
@@ -246,53 +270,85 @@ except Exception
         )
 
         connection.sock.connect(serverAddr[0][4])
+        connection.port = connection.sock.getsockname()[1]
     except Exception:
         connection.error = True
 
     return connection
 
+### CLIENT FUNCTIONALITY #######################################################
 
-def receive_handler(sock: socket.socket) -> None:
-    """Receive messages from the server and process."""
-
-    while True:
-        try:
-            message = sock.recv(1024).decode()
-            if message:
-                print_stdout(f"\r[Server] {message}\n")
-        except:
-            print_stderr("Connection Lost\n")
-            break
-
-
-def client_message_handler(sock: socket.socket) -> None:
-    """Read lines from stdin and process."""
-    print("Connected")
-    while True:
-        msg = input("Me: ")
-        if msg.lower() == "exit":
-            break
-
-        if msg:
-            sock.send(msg.encode())
-
-
-def runClient(connection: Connection) -> None:
+def runClient(connection: Connection, arguments: ClientProgramArgs) -> int:
     """Handle runtime behaviour for client.
     Creates read thread that receives messages from server socket.
     Handles sending messages through server socket."""
 
+    # TODO: ID and Server checking
+    ### TCP Style
+    ### Wait for server message
+    client: Client = handle_initial_connection(connection, arguments)
+
+
+    # TODO: If message argument publish then return
+
+
+    # Else handle stdin
     print_stdout(WELCOME_MSG)
-    sock = connection.sock
 
-    # Create receiving thread for handling messages from connection socket
-    # WARNING: Please put a reference to this. Docs page probably
-    Thread(target=receive_handler, args=(sock,), daemon=True).start()
 
-    # Now continuously read input from stdin
-    client_message_handler(sock)
+    connection.sock.close()
+    return 0
 
-    sock.close()
+
+def handle_initial_connection(
+        conn: Connection, arguments: ClientProgramArgs) -> Client:
+    """Server validity and client id checking.
+    Waits up to 0.8 second for a server response. If no response, outputs
+    error msg to stderr and attempt exit.
+    Checks client id against server to ensure uniqueness
+    """
+
+    # initially send message to server using protocol
+    # but empty datagram -- plain header
+
+
+    # server can then receive, check it is a valid client and check the client id
+    # client then receives message from server, checks that it is valid
+    # and gives flag whether client id is ok.
+    
+
+    client: Client = Client(arguments.client_id)
+    # initially send message to server using protocol
+    # but empty datagram -- plain header
+    msg = client.messenger.gen_msg(MessageProtocol.CONN_CODE)
+    msg = client.messenger.encode_msg(msg)
+    client.messenger.send_msg(conn.sock, msg)
+
+    return client
+
+    '''
+    # Server validity checking
+    conn.sock.settimeout(0.8)
+    try:
+        # Check server sends protocol header
+        data = conn.sock.recv(4)
+        msg = data.decode()
+        if msg != "1588":
+            show_error(Errors.INVALID_SERVER_CODE, server=conn.host, port=conn.port)
+            exit_program(Errors.INVALID_SERVER_CODE)
+
+    except socket.timeout:
+        show_error(Errors.INVALID_SERVER_CODE, server=conn.host, port=conn.port)
+        exit_program(Errors.INVALID_SERVER_CODE)
+
+    conn.sock.settimeout(None)
+
+    # Client uniqueness checking
+    # send number of bytes about to be sent
+    # send clientid
+    '''
+
+    # recv the ok or not
 
 
 ### Main #######################################################################
@@ -321,6 +377,7 @@ def main():
 
     ## Connection Checking
     connection: Connection = attempt_connection(arguments.server, arguments.port)
+    connection.host = arguments.server
     if connection.error:
         server = arguments.server
         port = arguments.port
@@ -328,17 +385,7 @@ def main():
         exit_program(Errors.UNABLE_TO_CONNECT_CODE)
 
     ## Client Runtime Behaviour
-    runClient(connection)
-
-
-    ## Server Validity Checking
-    #### TODO: MAKE PROTOCOL HERE
-    # is_compatible = isCompatibleServer(connection.sock)
-    # if not is_compatible:
-    #     show_error(Errors.INVALID_SERVER_CODE)
-    #     exit_program(Errors.INVALID_SERVER_CODE)
-
-    ## Client Uniqueness Checking
+    runClient(connection, arguments)
 
 if __name__ == "__main__":
     main()
