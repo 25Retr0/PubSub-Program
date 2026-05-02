@@ -15,7 +15,7 @@ from typing import Optional
 class Connection:
     sock: socket.socket
     error: bool = False
-    port: str | int | None = None
+    port: str | int | bytes | None = None
     host: str = ""
 
 ### Functions ##################################################################
@@ -31,13 +31,35 @@ def print_stdout(message: str) -> None:
     sys.stdout.flush()
 
 
-def isValidId(id: str) -> bool:
+def is_valid_topic(topic: str) -> bool:
+    """ A valid topic string consists of:
+        - Start with a letter (upper or lower)
+        - consist of letters, numbers, spaces, and/or '/' (forward slash)
+        Returns True if conditions met, otherwise False
+    """
+    # Check start character is a letter
+    start_letter = topic[0]     # No index error -> non-empty from parsing
+    if not start_letter.isalpha():
+        return False
+
+    # Check remaining characters follow rules
+    for char in topic:
+        if char.isalnum() or char in [' ', '/']: continue
+        return False
+    return True
+
+
+def is_valid_id(id: str) -> bool:
     """Given an id, returns True if:
         - must be between 2 and 32 characters (inclusive) in length.
         - contain only letters and/or digits
     """
     return ((2 <= len(id) <=32) and id.isalnum());
 
+
+def is_valid_message(message: str) -> bool:
+    """Returns True if the given message is printable. Otherwise False."""
+    return message.isprintable()
 
 ### Protocol + Protocol Functions ##############################################
 """
@@ -58,8 +80,11 @@ or send the size of the packet before the message to delimit it that way
 """
 
 class MessageProtocol:
+    OK_CODE = 0 
     CONN_CODE = 1
-    CONN_RESP = 2
+    PUBLISH_CODE = 2
+    DUP_ID_CODE = 3
+    DISCON_CODE = 4
 
     def __init__(self, is_server: bool, id: str):
         self.client_serv_flag = 1 if is_server else 0

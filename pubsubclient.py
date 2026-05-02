@@ -12,11 +12,12 @@ will need to be able to simultaneously handle messages from stdin and from
 the server.
 """
 
+from json import JSONDecodeError
 import sys
 import socket
 from pubsubshared import *
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Type
 from threading import Lock, Thread, current_thread
 
 ### Constants ##################################################################
@@ -53,16 +54,74 @@ class Commands:
             case _: return "Unknown usage"
 
 class Client:
-    def __init__(self, client_id):
+    def __init__(self, client_id: str, connection: Connection):
         self.client_id = client_id
         self.commands = Commands()
         self.messenger = MessageProtocol(is_server=False, id=self.client_id)
+        self.conn = connection
+
+        self.error_code = Errors.OK
+        self.error_lock = Lock()
 
 
+    def publish(self, topic: str, message: str) -> int:
+        # Check topic and message are valid
+        if not is_valid_topic(topic):
+            show_error(Errors.INVALID_TOPIC_CODE)
+            return Errors.INVALID_TOPIC_CODE
+        elif not is_valid_message(message):
+            show_error(Errors.INVALID_MESSAGE_CODE)
+            return Errors.INVALID_MESSAGE_CODE
+
+        msg = self.messenger.gen_msg(self.messenger.PUBLISH_CODE, message)
+        encoded_msg = self.messenger.encode_msg(msg)
+        self.messenger.send_msg(self.conn.sock, encoded_msg)
+        return Errors.OK
+
+
+    def notify(self, msg_code: int) -> int:
+        msg = self.messenger.gen_msg(msg_code)
+        encoded_msg = self.messenger.encode_msg(msg)
+        self.messenger.send_msg(self.conn.sock, encoded_msg)
+        return Errors.OK
+
+
+    def receive_from_server(self) -> int:
+        while True:
+            data = self.conn.sock.recv(1024)
+            print(data.decode())
+
+        return 0
+
+    def read_from_stdin(self) -> int:
+        while True:
+            try:
+                client_input = input()
+                if client_input == "/quit":
+                    self.notify(self.messenger.DISCON_CODE)
+                    break
+            except EOFError:
+                print("EOF EXCEPTION")
+                break;
+
+        return 0
+
+
+    def run(self) -> int:
+        Thread(
+            target=self.receive_from_server,
+            daemon=True
+        ).start()
+
+        self.read_from_stdin()
+
+        with self.error_lock:
+            return self.error_code
 
 
 ### Error Handler ##############################################################
 class Errors:
+    OK = 0
     USAGE_ERROR_CODE = 1
     BAD_CLIENT_ID_CODE = 4
     INVALID_TOPIC_CODE = 5
@@ -136,7 +195,7 @@ def show_error(error_code: int, **kwargs) -> None:
 
 def exit_program(error_code: int) -> None:
     """Exit from program with given error_code."""
-    print_stderr(f"\n--DEBUG--\nExited with code '{error_code}'")
+    # print_stderr(f"\n--DEBUG--\nExited with code '{error_code}'")
     sys.exit(error_code)
 
 
@@ -224,31 +283,6 @@ def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
     return program_args
 
 
-def is_valid_topic(topic: str) -> bool:
-    """ A valid topic string consists of:
-        - Start with a letter (upper or lower)
-        - consist of letters, numbers, spaces, and/or '/' (forward slash)
-        Returns True if conditions met, otherwise False
-    """
-
-    # Check start character is a letter
-    start_letter = topic[0]     # No index error -> non-empty from parsing
-    if not start_letter.isalpha():
-        return False
-
-    # Check remaining characters follow rules
-    for char in topic:
-        if char.isalnum() or char in [' ', '/']: continue
-        return False
-    
-    return True
-
-
-def isValidMessage(message: str) -> bool:
-    """Returns True if the given message is printable. Otherwise False."""
-    return message.isprintable()
-
-
 ### Networking Functions #######################################################
 def attempt_connection(server: str, serv_port: str) -> Connection:
     """Attempt connection to server:port given from command line
@@ -270,86 +304,76 @@ def attempt_connection(server: str, serv_port: str) -> Connection:
         )
 
         connection.sock.connect(serverAddr[0][4])
-        connection.port = connection.sock.getsockname()[1]
-    except Exception:
+        connection.port = serverAddr[0][4][1]   # get the port used
+
+    except Exception as e:
         connection.error = True
 
     return connection
 
-### CLIENT FUNCTIONALITY #######################################################
-
-def runClient(connection: Connection, arguments: ClientProgramArgs) -> int:
-    """Handle runtime behaviour for client.
-    Creates read thread that receives messages from server socket.
-    Handles sending messages through server socket."""
-
-    # TODO: ID and Server checking
-    ### TCP Style
-    ### Wait for server message
-    client: Client = handle_initial_connection(connection, arguments)
-
-
-    # TODO: If message argument publish then return
-
-
-    # Else handle stdin
-    print_stdout(WELCOME_MSG)
-
-
-    connection.sock.close()
-    return 0
-
 
 def handle_initial_connection(
-        conn: Connection, arguments: ClientProgramArgs) -> Client:
+        conn: Connection, arguments: ClientProgramArgs) -> tuple[int, Client]:
     """Server validity and client id checking.
     Waits up to 0.8 second for a server response. If no response, outputs
     error msg to stderr and attempt exit.
     Checks client id against server to ensure uniqueness
     """
 
-    # initially send message to server using protocol
-    # but empty datagram -- plain header
-
-
-    # server can then receive, check it is a valid client and check the client id
-    # client then receives message from server, checks that it is valid
-    # and gives flag whether client id is ok.
-    
-
-    client: Client = Client(arguments.client_id)
-    # initially send message to server using protocol
-    # but empty datagram -- plain header
+    client: Client = Client(arguments.client_id, conn)
     msg = client.messenger.gen_msg(MessageProtocol.CONN_CODE)
     msg = client.messenger.encode_msg(msg)
     client.messenger.send_msg(conn.sock, msg)
 
-    return client
-
-    '''
-    # Server validity checking
-    conn.sock.settimeout(0.8)
+    conn.sock.settimeout(0.5)
     try:
-        # Check server sends protocol header
         data = conn.sock.recv(4)
-        msg = data.decode()
-        if msg != "1588":
-            show_error(Errors.INVALID_SERVER_CODE, server=conn.host, port=conn.port)
-            exit_program(Errors.INVALID_SERVER_CODE)
+        if len(data) < 4:
+            return Errors.INVALID_SERVER_CODE, client
+
+        success, msg_len = MessageProtocol.decode_len_msg(data)
+        if not success:
+            return Errors.INVALID_SERVER_CODE, client
+
+        raw_msg = conn.sock.recv(msg_len)
+        decoded_msg = MessageProtocol.decode_msg(raw_msg)
+
+        try:
+            msg_data = json.loads(decoded_msg)
+            header = msg_data["header"]
+            code = msg_data["code"]
+
+            if header != "1588":
+                return Errors.INVALID_SERVER_CODE, client
+            elif code == MessageProtocol.DUP_ID_CODE:
+                return Errors.NON_UNIQUE_ID_CODE, client
+
+            return Errors.OK, client
+
+        except (json.JSONDecodeError, TypeError, KeyError):
+            return Errors.INVALID_SERVER_CODE, client
 
     except socket.timeout:
-        show_error(Errors.INVALID_SERVER_CODE, server=conn.host, port=conn.port)
-        exit_program(Errors.INVALID_SERVER_CODE)
+        return Errors.INVALID_SERVER_CODE, client
 
-    conn.sock.settimeout(None)
 
-    # Client uniqueness checking
-    # send number of bytes about to be sent
-    # send clientid
-    '''
+def runClient(connection: Connection, arguments: ClientProgramArgs) -> int:
+    """Handle runtime behaviour for client.
+    Creates read thread that receives messages from server socket.
+    Handles sending messages through server socket."""
 
-    # recv the ok or not
-
+    err, client = handle_initial_connection(connection, arguments)
+    if err != Errors.OK:
+        show_error(err, server=arguments.server, port=connection.port, 
+                   client_id=arguments.client_id)
+        exit_program(err)
+    elif arguments.topic != None and arguments.message != None:
+        client.publish(arguments.topic, arguments.message) # won't throw error
+    else:
+        print_stdout(WELCOME_MSG)
+        client.run()
+    connection.sock.close()
+    return Errors.OK
 
 ### Main #######################################################################
 def main():
@@ -361,7 +385,7 @@ def main():
         exit_program(Errors.USAGE_ERROR_CODE)
 
     ## Client ID Checking
-    if not isValidId(arguments.client_id):
+    if not is_valid_id(arguments.client_id):
         show_error(Errors.BAD_CLIENT_ID_CODE, client_id=arguments.client_id)
         exit_program(Errors.BAD_CLIENT_ID_CODE)
 
@@ -371,7 +395,7 @@ def main():
         exit_program(Errors.INVALID_TOPIC_CODE)
 
     ## Message Checking
-    if arguments.message and not isValidMessage(arguments.message):
+    if arguments.message and not is_valid_message(arguments.message):
         show_error(Errors.INVALID_MESSAGE_CODE)
         exit_program(Errors.INVALID_MESSAGE_CODE)
 
