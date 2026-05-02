@@ -38,7 +38,7 @@ class ServErrCode:
     UNKNOWN_CLIENT_CODE = 2
 
 
-### Classes $$$$$###############################################################
+### Classes ####################################################################
 
 class ServerProgramArgs:
     def __init__(self):
@@ -90,6 +90,11 @@ class ClientConnection():
         self.id = id
         self.topics = []
 
+    def __eq__(self, other) -> bool:
+        if isinstance(other, ClientConnection):
+            return self.id == other.id
+        return False
+
 
 class PubSubServer:
     def __init__(self, server_id: str):
@@ -117,32 +122,33 @@ class PubSubServer:
         with self._clients_lock:
             self.clients.append(client)
 
+    def remove_client(self, client: ClientConnection) -> None:
+        self.clients.remove(client)
+
     def is_duplicate_client_id(self, id: str) -> bool:
-        for client in self.clients:
+        for client in self.get_clients():
             if client.id == id:
                 return True
         return False
 
 
-    def check_connection_is_alive(self, client: ClientConnection):
-        # TODO: Send heartbeat ping to client, and check for pong back
-        pass
-
-
-    def start_receiving_from_client(self, sock: socket.socket):
+    def start_receiving_from_client(self, client: ClientConnection):
         # TODO: Handling receiving data from a client program
-        counter = 0
         while True:
             try:
-                data = sock.recv(4)
+                data = client.sock.recv(4)
                 if not data:
-                    print("client closed the connection")
                     break
 
                 # TODO: process data...
+                print(data.decode())
             except (ConnectionResetError):
-                print("client disconnected")
                 break
+
+        # When exiting loop client would have disconnected
+        self.show_client_disconnect(client.id)
+        self.close_client_connection(client)
+        self.remove_client(client)
 
 
     # --- Connection Handling --- #
@@ -187,7 +193,6 @@ class PubSubServer:
                     return (ServErrCode.UNKNOWN_CLIENT_CODE, None)
 
                 client: ClientConnection = ClientConnection(sock, client_id)
-                self.add_client(client)
                 return (ServErrCode.OK_CODE, client)
 
             except (json.JSONDecodeError, TypeError, KeyError):
@@ -221,7 +226,8 @@ class PubSubServer:
                 raw_msg = self.messenger.gen_msg(self.messenger.OK_CODE)
                 self.messenger.send_msg(connection_socket,
                                         self.messenger.encode_msg(raw_msg))
-                self.start_receiving_from_client(connection_socket)
+                self.add_client(connected_program)
+                self.start_receiving_from_client(connected_program)
         except Exception as e:  # HACK: This needs changing to be more useful
             print(e, sys.stderr)
 
