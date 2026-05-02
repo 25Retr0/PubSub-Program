@@ -131,6 +131,23 @@ class PubSubServer:
                 return True
         return False
 
+    def process_msg(self, client: ClientConnection, msg_data: dict):
+        try:
+            code = msg_data["code"]
+            topic = msg_data["topic"]
+            message = msg_data["message"]
+
+            match code:
+                case self.messenger.PUBLISH_CODE:
+                    # TODO: Add topic checking in
+                    # send to all clients besides this client
+                    self.relay_published_msg(client, message)
+
+                case _:
+                    print("unknown msg code")
+
+        except (KeyError, TypeError):
+            print("bad client message")
 
     def start_receiving_from_client(self, client: ClientConnection):
         # TODO: Handling receiving data from a client program
@@ -140,8 +157,20 @@ class PubSubServer:
                 if not data:
                     break
 
-                # TODO: process data...
-                print(data.decode())
+                success, msg_len = self.messenger.decode_len_msg(data)
+                if not success:
+                    print("protocol error")
+
+                raw_msg = client.sock.recv(msg_len)
+                decoded_msg = self.messenger.decode_msg(raw_msg)
+
+                try:
+                    msg_data = json.loads(decoded_msg)
+                    self.process_msg(client, msg_data)
+
+                except json.JSONDecodeError:
+                    print("bad client message")
+
             except (ConnectionResetError):
                 break
 
@@ -149,6 +178,16 @@ class PubSubServer:
         self.show_client_disconnect(client.id)
         self.close_client_connection(client)
         self.remove_client(client)
+
+
+    # --- Message Forwarding --- #
+    def relay_published_msg(self, client: ClientConnection, msg: str):
+        for c in self.get_clients():
+            if c != client: # Do not send back to original client
+                raw_msg = self.messenger.gen_msg(
+                    self.messenger.PUSH_PUB_MSG_CODE, msg)
+                self.messenger.send_msg(c.sock,
+                    self.messenger.encode_msg(raw_msg))
 
 
     # --- Connection Handling --- #
