@@ -474,7 +474,7 @@ def attempt_listen(serv_port: str | None) -> Connection:
             port = int(serv_port)
         else:
             addr = socket.getaddrinfo(
-                None, serv_port, socket.AF_INET, socket.SOCK_STREAM
+                "0.0.0.0", serv_port, socket.AF_INET, socket.SOCK_STREAM
             )
             connection.sock.bind(addr[0][4])
             connection.sock.listen(QUEUED_CONNS)
