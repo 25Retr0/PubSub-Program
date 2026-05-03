@@ -12,13 +12,14 @@ will need to be able to simultaneously handle messages from stdin and from
 the server.
 """
 
-from json import JSONDecodeError
+import json
 import sys
 import socket
 from pubsubshared import *
 from dataclasses import dataclass
-from typing import Optional, Type
-from threading import Lock, Thread, current_thread
+import select
+from typing import Optional
+from threading import Lock, Thread
 
 ### Constants ##################################################################
 PROGRAM = "pubsubclient"
@@ -61,7 +62,17 @@ class Client:
         self.conn = connection
 
         self.error_code = Errors.OK
-        self.error_lock = Lock()
+        self._error_lock = Lock()
+
+
+    def get_error_code(self) -> int:
+        with self._error_lock:
+            err_code = self.error_code
+        return err_code
+
+    def set_error_code(self, err_code) -> None:
+        with self._error_lock:
+            self.error_code = err_code
 
 
     def publish(self, topic: str, message: str) -> int:
@@ -86,37 +97,64 @@ class Client:
         return Errors.OK
 
 
-    def receive_from_server(self) -> int:
-        while True:
-            data = self.conn.sock.recv(1024)
-            print(data.decode())
-
-        return 0
-
-    def read_from_stdin(self) -> int:
-        while True:
+    def receive_from_server(self, conn: Connection) -> None:
+        while self.get_error_code() == Errors.OK:
             try:
-                client_input = input()
-                if client_input == "/quit":
-                    self.notify(self.messenger.DISCON_CODE)
-                    break
+                data = conn.sock.recv(4)
+                if not data:
+                    self.set_error_code(Errors.ABRUPT_SERVER_CLOSE)
+                    return
+
+                success, msg_len = self.messenger.decode_len_msg(data)
+                if not success:
+                    print("protocol error")
+                    continue
+
+                raw_msg = conn.sock.recv(msg_len)
+                decoded_msg = self.messenger.decode_msg(raw_msg)
+                try:
+                    msg_data = json.loads(decoded_msg)
+                    # TODO: process msg
+
+                except json.JSONDecodeError:
+                    print("protocol error")
+                    continue
+
+            except (ConnectionResetError, BrokenPipeError):
+                # set error code
+                self.set_error_code(Errors.ABRUPT_SERVER_CLOSE)
+                return
+
+
+    def read_user_input(self) -> None:
+        while self.get_error_code() == Errors.OK:
+            try:
+                # Check if stdin has data to read
+                # BUG: Ref AI usage here
+                ready, _, _ = select.select([sys.stdin], [], [], 0.2)
+                if ready:
+                    # WARNING: potential bug for windows systems
+                    client_input = sys.stdin.readline().rstrip()
+                    if client_input == "/quit":
+                        self.notify(self.messenger.DISCON_CODE)
+                        self.set_error_code(Errors.OK)
+                        return
             except EOFError:
                 print("EOF EXCEPTION")
-                break;
+                return
 
-        return 0
+    def process_user_input(self, user_input: str) -> None:
+        pass
 
-
-    def run(self) -> int:
+    def run(self, connection: Connection) -> int:
         Thread(
             target=self.receive_from_server,
+            args=(connection,),
             daemon=True
         ).start()
 
-        self.read_from_stdin()
-
-        with self.error_lock:
-            return self.error_code
+        self.read_user_input()
+        return self.get_error_code()
 
 
 ### Error Handler ##############################################################
@@ -129,6 +167,7 @@ class Errors:
     UNABLE_TO_CONNECT_CODE = 7
     INVALID_SERVER_CODE = 8
     NON_UNIQUE_ID_CODE = 9
+    ABRUPT_SERVER_CLOSE = 10
 
     @staticmethod
     def usage_msg()-> str:
@@ -160,6 +199,10 @@ class Errors:
         return f"{PROGRAM}: client ID \"{client_id}\" is not unique"
 
     @staticmethod
+    def abrupt_server_close_msg() -> str:
+        return f"{PROGRAM}: server disconnected - exiting"
+
+    @staticmethod
     def unknown_error_msg() -> str:
         return f"{PROGRAM}: Unknown Error Detected"
 
@@ -189,6 +232,8 @@ def show_error(error_code: int, **kwargs) -> None:
         case Errors.NON_UNIQUE_ID_CODE:
             msg = kwargs.get("client_id", "CLIENTID")
             print_stderr(Errors.non_unique_id_msg(msg))
+        case Errors.ABRUPT_SERVER_CLOSE:
+            print_stderr(Errors.abrupt_server_close_msg())
         case _:
             print_stderr(Errors.unknown_error_msg())
 
@@ -363,17 +408,24 @@ def runClient(connection: Connection, arguments: ClientProgramArgs) -> int:
     Handles sending messages through server socket."""
 
     err, client = handle_initial_connection(connection, arguments)
+    connection.sock.settimeout(None)
     if err != Errors.OK:
         show_error(err, server=arguments.server, port=connection.port, 
                    client_id=arguments.client_id)
+        connection.sock.close()
         exit_program(err)
     elif arguments.topic != None and arguments.message != None:
         client.publish(arguments.topic, arguments.message) # won't throw error
     else:
         print_stdout(WELCOME_MSG)
-        client.run()
+        err = client.run(connection)
+        if err != Errors.OK:
+            show_error(err)
+            connection.sock.close()
+            exit_program(err)
+
     connection.sock.close()
-    return Errors.OK
+    return err
 
 ### Main #######################################################################
 def main():
@@ -409,7 +461,8 @@ def main():
         exit_program(Errors.UNABLE_TO_CONNECT_CODE)
 
     ## Client Runtime Behaviour
-    runClient(connection, arguments)
+    err = runClient(connection, arguments)
+    exit_program(err)
 
 if __name__ == "__main__":
     main()
