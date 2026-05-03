@@ -18,6 +18,34 @@ class Connection:
     port: str | int | bytes | None = None
     host: str = ""
 
+class Subscription:
+    def __init__(self, topic: str):
+        self.topic = topic
+        self.op = ""
+        self.arg = ""
+
+        self.valid_ops = ["<", "<=", ">", ">=", "==", "!="]
+
+    def get_topic(self):
+        return self.topic
+
+    def get_op(self):
+        return self.op
+
+    def set_op(self, op: str) -> bool:
+        if op in self.valid_ops:
+            self.op = op
+            return True
+        return False
+
+    def get_arg(self):
+        return self.arg
+
+    def set_arg(self, arg: str) -> bool:
+        # TODO:
+        return True
+
+
 ### Functions ##################################################################
 def print_stderr(message: str) -> None:
     """Helper method for printing a message to stderr."""
@@ -80,9 +108,15 @@ or send the size of the packet before the message to delimit it that way
 """
 
 class MessageProtocol:
+    # -- Utility Codes
     OK_CODE = 0 
     CONN_CODE = 1
+
+    # -- Messaging Codes
     PUBLISH_CODE = 2
+    PUSH_PUB_MSG_CODE = 5
+
+    # -- Error Codes
     DUP_ID_CODE = 3
     DISCON_CODE = 4
 
@@ -92,13 +126,18 @@ class MessageProtocol:
         self.id_len = len(id)
 
 
-    def gen_msg(self, msg_code: int, message: str = "") -> dict:
+    def gen_msg(self, 
+                msg_code: int, 
+                topic: str = "", 
+                message: str = ""
+    ) -> dict:
         return {
             "header": "1588",
             "msg_id": 0, # TODO: Mutex for a global counter. Or attach to id
             "type_flag": 1 if self.client_serv_flag else 0,
             "id": self.id,
             "code": msg_code,
+            "topic": topic,
             "message": message
         }
 
@@ -116,7 +155,6 @@ class MessageProtocol:
             return (True, length)
         except Exception: 
             return (False, 0)
-
 
     @staticmethod
     def decode_msg(msg: bytes) -> str:

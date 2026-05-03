@@ -38,32 +38,69 @@ class ClientProgramArgs:
 
 ### Classes ####################################################################
 class Commands:
-    subscribe = "/subscribe"
-    subscribe_usage = f"{subscribe} topic [filter]"
-    
-    def unknown_command_msg(self) -> str:
-        return f"{PROGRAM}: unknown command"
 
-    def unknown_argumemts_msg(self, command: str) -> str:
-        return f"{PROGRAM}: unknown arguments(s) - usage: " \
-            "{cls.get_usage_cmd(command)}"
+    def __init__(self):
+        # Strings
+        self.subscribe = "/subscribe"
+        self.unsubcribe = "/unsubscribe"
+        self.topic = "/topic"
+        self.sendfile = "/sendfile"
+        self.listsubs = "/listsubs"
+        self.publish = "/publish"
+        self.quit = "/quit"
+
+    def show_unknown_command_msg(self) -> None:
+        print_stderr(f"{PROGRAM}: unknown command")
+
+    def show_unknown_argumemts_msg(self, command: str) -> None:
+        print_stderr(f"{PROGRAM}: unknown arguments(s) - usage: " \
+            f"{self.get_usage_cmd(command)}")
+
+    def show_no_def_topic_msg(self) -> None:
+        print_stderr(f"{PROGRAM}: no default topic set")
     
+    def show_invalid_message_msg(self) -> None:
+        show_error(Errors.INVALID_MESSAGE_CODE)
+
+    def show_invalid_topic_msg(self, topic: str) -> None:
+        show_error(Errors.INVALID_TOPIC_CODE, topic=topic)
+
 
     def get_usage_cmd(self, command: str) -> str:
         match command:
-            case self.subscribe: return self.subscribe_usage
+            case self.subscribe: return f"{self.subscribe} topic [filter]"
+            case self.topic: return f"{self.topic} topic"
             case _: return "Unknown usage"
 
+
 class Client:
-    def __init__(self, client_id: str, connection: Connection):
+    def __init__(self, client_id: str, connection: Connection, topic: str | None):
         self.client_id = client_id
         self.commands = Commands()
         self.messenger = MessageProtocol(is_server=False, id=self.client_id)
         self.conn = connection
 
+        self.default_topic = topic
+        self._default_topic_lock = Lock()
+
         self.error_code = Errors.OK
         self._error_lock = Lock()
 
+        self.subsriptions: list[Subscription] = []
+        self._subscriptions_lock = Lock()
+
+
+        self.client_quit = False
+        self._client_quit_lock = Lock()
+
+    def did_client_quit(self):
+        with self._client_quit_lock:
+            did_quit = self.client_quit
+        return did_quit
+
+    def set_client_quit(self, did: bool):
+        with self._client_quit_lock:
+            self.client_quit = did
 
     def get_error_code(self) -> int:
         with self._error_lock:
@@ -73,6 +110,16 @@ class Client:
     def set_error_code(self, err_code) -> None:
         with self._error_lock:
             self.error_code = err_code
+
+
+    def get_default_topic(self) -> str | None:
+        with self._default_topic_lock:
+            topic = self.default_topic
+        return topic
+
+    def set_default_topic(self, topic: str) -> None:
+        with self._default_topic_lock:
+            self.default_topic = topic
 
 
     def publish(self, topic: str, message: str) -> int:
@@ -98,11 +145,12 @@ class Client:
 
 
     def receive_from_server(self, conn: Connection) -> None:
-        while self.get_error_code() == Errors.OK:
+        while self.get_error_code() == Errors.OK and not self.did_client_quit():
             try:
                 data = conn.sock.recv(4)
                 if not data:
-                    self.set_error_code(Errors.ABRUPT_SERVER_CLOSE)
+                    if not self.did_client_quit():
+                        self.set_error_code(Errors.ABRUPT_SERVER_CLOSE)
                     return
 
                 success, msg_len = self.messenger.decode_len_msg(data)
@@ -122,29 +170,59 @@ class Client:
 
             except (ConnectionResetError, BrokenPipeError):
                 # set error code
-                self.set_error_code(Errors.ABRUPT_SERVER_CLOSE)
+                if not self.did_client_quit():
+                    self.set_error_code(Errors.ABRUPT_SERVER_CLOSE)
                 return
 
+    def handle_user_input(self, client_input):
+        if client_input == self.commands.quit:
+            self.set_client_quit(True)
+            self.notify(self.messenger.DISCON_CODE)
+            self.set_error_code(Errors.OK)
+            return
+        elif client_input.startswith(self.commands.topic):
+            topic_info = client_input.split(" ")
+            if len(topic_info) != 2:
+                self.commands.show_unknown_argumemts_msg(self.commands.topic)
+            topic = topic_info[1].strip("\" ")
+            if not is_valid_topic(topic):
+                self.commands.show_invalid_topic_msg(topic)
+            else:
+                self.set_default_topic(topic)
+        elif client_input.startswith(self.commands.publish):
+            publish_info = client_input.split(" ")
+            if len(publish_info) != 3:
+                self.commands.show_unknown_argumemts_msg(self.commands.publish)
+            topic, msg = publish_info[1].strip("\" "), publish_info[2].strip("\" ")
+            self.publish(topic, msg)
+
+        elif client_input.startswith("/"):
+            # at this point would be an unknown command
+            self.commands.show_unknown_command_msg()
+        elif client_input == "":
+            # Empty strings are ignored
+            return
+        else:
+            topic = self.get_default_topic()
+            if topic == None:
+                self.commands.show_no_def_topic_msg()
+            elif is_valid_message(client_input):
+                self.publish(topic, client_input)
+            else:
+                self.commands.show_invalid_message_msg()
 
     def read_user_input(self) -> None:
-        while self.get_error_code() == Errors.OK:
+        while self.get_error_code() == Errors.OK and not self.did_client_quit():
             try:
-                # Check if stdin has data to read
                 # BUG: Ref AI usage here
                 ready, _, _ = select.select([sys.stdin], [], [], 0.2)
                 if ready:
                     # WARNING: potential bug for windows systems
-                    client_input = sys.stdin.readline().rstrip()
-                    if client_input == "/quit":
-                        self.notify(self.messenger.DISCON_CODE)
-                        self.set_error_code(Errors.OK)
-                        return
+                    client_input = sys.stdin.readline().rstrip().strip()
+                    self.handle_user_input(client_input)
             except EOFError:
                 print("EOF EXCEPTION")
                 return
-
-    def process_user_input(self, user_input: str) -> None:
-        pass
 
     def run(self, connection: Connection) -> int:
         Thread(
@@ -365,7 +443,7 @@ def handle_initial_connection(
     Checks client id against server to ensure uniqueness
     """
 
-    client: Client = Client(arguments.client_id, conn)
+    client: Client = Client(arguments.client_id, conn, arguments.topic)
     msg = client.messenger.gen_msg(MessageProtocol.CONN_CODE)
     msg = client.messenger.encode_msg(msg)
     client.messenger.send_msg(conn.sock, msg)
