@@ -65,6 +65,12 @@ class Commands:
     def show_invalid_topic_msg(self, topic: str) -> None:
         show_error(Errors.INVALID_TOPIC_CODE, topic=topic)
 
+    def show_unsubscribed(self, topic):
+        print_stderr(f"{PROGRAM}: unsubscribed from messages about \"{topic}\"")
+
+    def show_failed_unsubscribe(self, topic):
+        print_stderr(f"{PROGRAM}: not subscribed to messages about \"{topic}\"")
+
 
     def get_usage_cmd(self, command: str) -> str:
         match command:
@@ -79,6 +85,7 @@ class Client:
         self.commands = Commands()
         self.messenger = MessageProtocol(is_server=False, id=self.client_id)
         self.conn = connection
+        self.connected_server_id = ""
 
         self.default_topic = topic
         self._default_topic_lock = Lock()
@@ -86,7 +93,7 @@ class Client:
         self.error_code = Errors.OK
         self._error_lock = Lock()
 
-        self.subsriptions: list[Subscription] = []
+        self.subscriptions: list[Subscription] = []
         self._subscriptions_lock = Lock()
 
 
@@ -121,6 +128,21 @@ class Client:
         with self._default_topic_lock:
             self.default_topic = topic
 
+    def add_subscription(self, subscription: Subscription):
+        with self._subscriptions_lock:
+            self.subscriptions.append(subscription)
+
+    def get_subscriptions(self):
+        with self._subscriptions_lock:
+            return list(self.subscriptions)
+
+    def remove_subscriptions(self, subscription: Subscription):
+        with self._subscriptions_lock:
+            for i, sub in enumerate(self.subscriptions):
+                if sub == subscription:
+                    self.subscriptions.pop(i)
+                    return True
+        return False
 
     def publish(self, topic: str, message: str) -> int:
         # Check topic and message are valid
@@ -131,18 +153,28 @@ class Client:
             show_error(Errors.INVALID_MESSAGE_CODE)
             return Errors.INVALID_MESSAGE_CODE
 
-        msg = self.messenger.gen_msg(self.messenger.PUBLISH_CODE, message)
+        message_data = {
+            "topic": topic,
+            "msg": message,
+            "publishing_server": self.connected_server_id,
+        }
+        msg = self.messenger.gen_msg(self.messenger.PUBLISH_CODE, message_data)
         encoded_msg = self.messenger.encode_msg(msg)
         self.messenger.send_msg(self.conn.sock, encoded_msg)
         return Errors.OK
 
 
-    def notify(self, msg_code: int) -> int:
-        msg = self.messenger.gen_msg(msg_code)
+    def notify(self, msg_code: int, message: str | dict = "") -> int:
+        msg = self.messenger.gen_msg(msg_code, message)
         encoded_msg = self.messenger.encode_msg(msg)
         self.messenger.send_msg(self.conn.sock, encoded_msg)
         return Errors.OK
 
+    def process_server_msg(self, msg_data):
+        code = msg_data["code"]
+
+        if code == self.messenger.PUBLISH_CODE:
+            print(msg_data["message"])
 
     def receive_from_server(self, conn: Connection) -> None:
         while self.get_error_code() == Errors.OK and not self.did_client_quit():
@@ -162,7 +194,7 @@ class Client:
                 decoded_msg = self.messenger.decode_msg(raw_msg)
                 try:
                     msg_data = json.loads(decoded_msg)
-                    # TODO: process msg
+                    self.process_server_msg(msg_data)
 
                 except json.JSONDecodeError:
                     print("protocol error")
@@ -193,8 +225,38 @@ class Client:
             publish_info = client_input.split(" ")
             if len(publish_info) != 3:
                 self.commands.show_unknown_argumemts_msg(self.commands.publish)
-            topic, msg = publish_info[1].strip("\" "), publish_info[2].strip("\" ")
-            self.publish(topic, msg)
+            else:
+                topic, msg = publish_info[1].strip("\" "), publish_info[2].strip("\" ")
+                self.publish(topic, msg)
+        elif client_input.startswith(self.commands.subscribe):
+            sub_info = client_input.split(" ")
+            if len(sub_info) != 2 and len(sub_info) != 3:
+                self.commands.show_unknown_argumemts_msg(self.commands.subscribe)
+            
+            if len(sub_info) == 2:
+                topic = sub_info[1].strip("\" ")
+                if not is_valid_topic(topic):
+                    self.commands.show_invalid_topic_msg(topic)
+                else:
+                    subscription = Subscription(topic)
+                    self.add_subscription(subscription)
+                    self.notify(self.messenger.SUBCRIBE_CODE, subscription.to_json_msg())
+        elif client_input.startswith(self.commands.unsubcribe):
+            unsub_info = client_input.split(" ")
+            if len(unsub_info) != 2:
+                self.commands.show_unknown_argumemts_msg(self.commands.unsubcribe)
+            else:
+                topic = unsub_info.strip("\" ")
+                if not is_valid_topic(topic):
+                    self.commands.show_invalid_topic_msg(topic)
+                else:
+                    subscription = Subscription(topic)
+                    removed = self.remove_subscriptions(subscription)
+                    if removed:
+                        self.commands.show_unsubscribed(topic)
+                        self.notify(self.messenger.SUBCRIBE_CODE, subscription.to_json_msg())
+                    else:
+                        self.commands.show_failed_unsubscribe(topic)
 
         elif client_input.startswith("/"):
             # at this point would be an unknown command
@@ -206,10 +268,10 @@ class Client:
             topic = self.get_default_topic()
             if topic == None:
                 self.commands.show_no_def_topic_msg()
-            elif is_valid_message(client_input):
-                self.publish(topic, client_input)
-            else:
+            elif not is_valid_message(client_input):
                 self.commands.show_invalid_message_msg()
+            else:
+                self.publish(topic, client_input.strip("\" "))
 
     def read_user_input(self) -> None:
         while self.get_error_code() == Errors.OK and not self.did_client_quit():
@@ -465,12 +527,14 @@ def handle_initial_connection(
             msg_data = json.loads(decoded_msg)
             header = msg_data["header"]
             code = msg_data["code"]
+            id = msg_data["id"]
 
             if header != "1588":
                 return Errors.INVALID_SERVER_CODE, client
             elif code == MessageProtocol.DUP_ID_CODE:
                 return Errors.NON_UNIQUE_ID_CODE, client
 
+            client.connected_server_id = id
             return Errors.OK, client
 
         except (json.JSONDecodeError, TypeError, KeyError):

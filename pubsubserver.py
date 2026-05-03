@@ -18,6 +18,7 @@ import socket
 from dataclasses import dataclass
 from typing import Optional
 from threading import Lock, Thread
+from pubsubclient import Client
 from pubsubshared import *
 
 ### Constants ##################################################################
@@ -88,12 +89,18 @@ class ClientConnection():
     def __init__(self, sock: socket.socket, id: str):
         self.sock = sock
         self.id = id
-        self.topics = []
+        self.subscriptions = []
 
     def __eq__(self, other) -> bool:
         if isinstance(other, ClientConnection):
             return self.id == other.id
         return False
+
+    def get_topics(self):
+        topics = []
+        for sub in self.subscriptions:
+            topics.append(sub.topic)
+        return topics
 
 
 class PubSubServer:
@@ -130,23 +137,42 @@ class PubSubServer:
                 return True
         return False
 
+    def add_sub_to_client(self, client: ClientConnection, sub: Subscription):
+        with self._clients_lock:
+            for c in self.clients:
+                if c == client:
+                    c.subscriptions.append(sub)
+                    break
+    def remove_sub_from_client(self, topic):
+        pass
+
     def process_msg(self, client: ClientConnection, msg_data: dict):
         try:
+            id = msg_data["id"]
             code = msg_data["code"]
-            topic = msg_data["topic"]
-            message = msg_data["message"]
+            msg_data = msg_data["message"]
 
             match code:
                 case self.messenger.PUBLISH_CODE:
-                    # TODO: Add topic checking in
-                    self.relay_published_msg(client, message)
+                    topic = msg_data["topic"]
+                    message = msg_data["msg"]
+                    publishing_server = msg_data["publishing_server"]
+                    message = f"{topic}: {message} ({publishing_server}:{id})"
+                    self.relay_published_msg(client, topic, message)
                     return self.messenger.PUBLISH_CODE
+                case self.messenger.SUBCRIBE_CODE:
+                    topic = msg_data["topic"]
+                    op = msg_data["op"] or ""
+                    arg = msg_data["arg"] or ""
+                    self.add_sub_to_client(client, Subscription(topic, op, arg))
+
                 case self.messenger.DISCON_CODE:
                     return self.messenger.DISCON_CODE
                 case _:
                     print("unknown msg code")
 
-        except (KeyError, TypeError):
+        except (KeyError, TypeError) as e:
+            print(e)
             print("bad client message")
 
     def start_receiving_from_client(self, client: ClientConnection):
@@ -171,7 +197,8 @@ class PubSubServer:
                     if return_code == self.messenger.DISCON_CODE:
                         break
 
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as e:
+                    print(e)
                     print("bad client message")
 
             except ConnectionResetError:
@@ -184,11 +211,11 @@ class PubSubServer:
 
 
     # --- Message Forwarding --- #
-    def relay_published_msg(self, client: ClientConnection, msg: str):
+    def relay_published_msg(self, client: ClientConnection, topic, msg: str):
         for c in self.get_clients():
-            if c != client: # Do not send back to original client
+            if topic in c.get_topics():
                 raw_msg = self.messenger.gen_msg(
-                    self.messenger.PUSH_PUB_MSG_CODE, msg)
+                    self.messenger.PUBLISH_CODE, msg)
                 self.messenger.send_msg(c.sock,
                     self.messenger.encode_msg(raw_msg))
 

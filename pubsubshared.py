@@ -19,12 +19,18 @@ class Connection:
     host: str = ""
 
 class Subscription:
-    def __init__(self, topic: str):
+    def __init__(self, topic: str, op = "", arg = ""):
         self.topic = topic
         self.op = ""
         self.arg = ""
 
         self.valid_ops = ["<", "<=", ">", ">=", "==", "!="]
+
+    def __eq__(self, other):
+        return self.topic == other.topic
+
+    def __str__(self):
+        return f"{self.topic} {self.op or "-"} {self.arg or "-"}"
 
     def get_topic(self):
         return self.topic
@@ -44,6 +50,13 @@ class Subscription:
     def set_arg(self, arg: str) -> bool:
         # TODO:
         return True
+
+    def to_json_msg(self):
+        return {
+            "topic": self.topic,
+            "op" : self.op,
+            "arg": self.arg,
+        }
 
 
 ### Functions ##################################################################
@@ -90,35 +103,14 @@ def is_valid_message(message: str) -> bool:
     return message.isprintable()
 
 ### Protocol + Protocol Functions ##############################################
-"""
-Message Structure: what is needed?
-
-HEADER = 48821588
-SERVER/CLIENT FLAG = 0 || 1
-SERVER/CLIENT ID LEN = n
-SERVER/CLIENT ID = "___"
-MESSAGE_CODE = 0 || 1 || 2 ||3 ....etc  for handling publishing, requests, etc.
-MESSAGE LEN = n
-MESSAGE = "____"
-
-USE JSON
-
-# WARNING: potential for packets to be joined. need some sort of delimiter?
-or send the size of the packet before the message to delimit it that way
-"""
-
 class MessageProtocol:
-    # -- Utility Codes
     OK_CODE = 0 
     CONN_CODE = 1
-
-    # -- Messaging Codes
     PUBLISH_CODE = 2
-    PUSH_PUB_MSG_CODE = 5
-
-    # -- Error Codes
     DUP_ID_CODE = 3
     DISCON_CODE = 4
+    SUBCRIBE_CODE = 5
+    UNSUBCRIBE_CODE = 6
 
     def __init__(self, is_server: bool, id: str):
         self.client_serv_flag = 1 if is_server else 0
@@ -128,8 +120,7 @@ class MessageProtocol:
 
     def gen_msg(self, 
                 msg_code: int, 
-                topic: str = "", 
-                message: str = ""
+                message: str | dict = ""
     ) -> dict:
         return {
             "header": "1588",
@@ -137,10 +128,8 @@ class MessageProtocol:
             "type_flag": 1 if self.client_serv_flag else 0,
             "id": self.id,
             "code": msg_code,
-            "topic": topic,
             "message": message
         }
-
 
     def send_msg(self, sock: socket.socket, msg: bytes) -> None:
         header = struct.pack(">I", len(msg))
