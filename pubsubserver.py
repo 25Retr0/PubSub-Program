@@ -107,11 +107,10 @@ class PubSubServer:
     # --- Client Management --- #
 
     def close_client_connection(self, client: ClientConnection) -> bool:
-        with self._clients_lock:
-            for c in self.clients:
-                if client == c:
-                    c.sock.close()
-                    return True
+        for c in self.get_clients():
+            if client == c:
+                c.sock.close()
+                return True
         return False
 
     def get_clients(self) -> list[ClientConnection]:
@@ -140,9 +139,10 @@ class PubSubServer:
             match code:
                 case self.messenger.PUBLISH_CODE:
                     # TODO: Add topic checking in
-                    # send to all clients besides this client
                     self.relay_published_msg(client, message)
-
+                    return self.messenger.PUBLISH_CODE
+                case self.messenger.DISCON_CODE:
+                    return self.messenger.DISCON_CODE
                 case _:
                     print("unknown msg code")
 
@@ -166,12 +166,15 @@ class PubSubServer:
 
                 try:
                     msg_data = json.loads(decoded_msg)
-                    self.process_msg(client, msg_data)
+                    return_code = self.process_msg(client, msg_data)
+
+                    if return_code == self.messenger.DISCON_CODE:
+                        break
 
                 except json.JSONDecodeError:
                     print("bad client message")
 
-            except (ConnectionResetError):
+            except ConnectionResetError:
                 break
 
         # When exiting loop client would have disconnected
@@ -228,8 +231,8 @@ class PubSubServer:
                     self.show_unknown_client_msg()
                     return (ServErrCode.UNKNOWN_CLIENT_CODE, None)
                 elif self.is_duplicate_client_id(client_id):
-                    self.show_unknown_client_msg()
-                    return (ServErrCode.UNKNOWN_CLIENT_CODE, None)
+                    self.show_client_duplicate_msg(client_id)
+                    return (ServErrCode.DUP_CLIENT_CODE, None)
 
                 client: ClientConnection = ClientConnection(sock, client_id)
                 return (ServErrCode.OK_CODE, client)
