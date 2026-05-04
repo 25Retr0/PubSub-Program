@@ -13,9 +13,9 @@ the server.
 """
 
 import json
-from re import split
 import sys
 import socket
+import ast
 from pubsubshared import *
 from dataclasses import dataclass
 import select
@@ -78,6 +78,8 @@ class Commands:
     def show_failed_unsubscribe(self, topic):
         print_stderr(f"{PROGRAM}: not subscribed to messages about \"{topic}\"")
 
+    def show_unable_to_open_file(self, filename):
+        print_stderr(f"{PROGRAM}: unable to open file \"{filename}\"")
 
     def get_usage_cmd(self, command: str) -> str:
         match command:
@@ -85,6 +87,7 @@ class Commands:
             case self.topic: return f"{self.topic} topic"
             case self.publish: return f"{self.publish} topic message"
             case self.listsubs: return f"{self.listsubs}"
+            case self.sendfile: return f"{self.sendfile} filename [topic]"
             case _: return "Unknown usage"
 
 
@@ -108,6 +111,15 @@ class Client:
 
         self.client_quit = False
         self._client_quit_lock = Lock()
+
+        self.files_received = 0
+        self._files_received_lock = Lock()
+
+    def increment_and_get_files_received(self):
+        with self._files_received_lock:
+            self.files_received += 1
+            n = self.files_received
+        return n
 
     def did_client_quit(self):
         with self._client_quit_lock:
@@ -162,21 +174,26 @@ class Client:
         self.commands.show_failed_unsubscribe(subscription.topic)
         return False
 
-    def publish(self, topic: str, message: str) -> int:
+    def publish(self, topic: str, message, code=None) -> int:
         # Check topic and message are valid
-        if not is_valid_topic(topic):
-            show_error(Errors.INVALID_TOPIC_CODE)
-            return Errors.INVALID_TOPIC_CODE
-        elif not is_valid_message(message):
-            show_error(Errors.INVALID_MESSAGE_CODE)
-            return Errors.INVALID_MESSAGE_CODE
+        if code != self.messenger.SEND_FILE:
+            if not is_valid_topic(topic):
+                show_error(Errors.INVALID_TOPIC_CODE)
+                return Errors.INVALID_TOPIC_CODE
+            elif not is_valid_message(message):
+                show_error(Errors.INVALID_MESSAGE_CODE)
+                return Errors.INVALID_MESSAGE_CODE
 
         message_data = {
             "topic": topic,
             "msg": message,
             "publishing_server": self.connected_server_id,
         }
-        msg = self.messenger.gen_msg(self.messenger.PUBLISH_CODE, message_data)
+        if code != None:
+            msg = self.messenger.gen_msg(code, message_data)
+        else:
+            msg = self.messenger.gen_msg(self.messenger.PUBLISH_CODE, message_data)
+
         encoded_msg = self.messenger.encode_msg(msg)
         self.messenger.send_msg(self.conn.sock, encoded_msg)
         return Errors.OK
@@ -193,6 +210,42 @@ class Client:
 
         if code == self.messenger.PUBLISH_CODE:
             print_stdout(msg_data["message"]["messge_full"])
+        elif code == self.messenger.SEND_FILE:
+            file_size = msg_data["message"]["msg"]["file_size"]
+            file_name = msg_data["message"]["msg"]["filename"]
+            file_content = msg_data["message"]["msg"]["file"]
+            
+            topic = msg_data["message"]["topic"]
+            comms = msg_data["message"]["comms"]
+
+            split_file_name = file_name.split("\\/")
+            filename = split_file_name[-1]
+
+            saved_file_name = self.change_file_name(filename)
+            print_stdout(f"{topic}: received file \"{saved_file_name}\" from {comms} ({file_size} bytes)")
+
+            try:
+                with open(saved_file_name, "wb") as file:
+                    file.write(ast.literal_eval(file_content)) # encode as it is passed as a str
+            except:
+                print_stderr(f"{PROGRAM}: cannot save file \"{saved_file_name}\"")
+
+    def change_file_name(self, filename):
+        # get dir separator
+        separator = ""
+        for c in filename:
+            if c == "\\":
+                separator = c
+            elif c == "/":
+                separator = c
+
+        n = self.increment_and_get_files_received()
+        if separator == "": # No dir path was given, easy name change
+            return f"{n}_{filename}"
+        else:
+            split_name = filename.split(separator)
+            unchanged = separator.join(split_name[:-1])
+            return f"{unchanged}{separator}{n}_{filename}"
 
     def receive_from_server(self, conn: Connection) -> None:
         while self.get_error_code() == Errors.OK and not self.did_client_quit():
@@ -304,6 +357,40 @@ class Client:
 
             for sub in self.get_subscriptions():
                 print_stdout(str(sub))
+        # /sendfile filename [topic]
+        elif client_input.startswith(self.commands.sendfile):
+            info = split_args(client_input)
+            if not (len(info) == 2 or len(info) == 3):
+                self.commands.show_unknown_argumemts_msg(self.commands.sendfile)
+                return
+
+            filename = info[1]
+
+            try:
+                with open(filename, "rb") as file:
+                    content = file.read()
+            except FileNotFoundError:
+                self.commands.show_unable_to_open_file(filename)
+                return
+
+            if len(info) == 3:
+                topic = info[2]
+                if not is_valid_topic(topic):
+                    self.commands.show_invalid_topic_msg(topic)
+                    return
+            else:
+                topic = self.get_default_topic()
+                if topic == None:
+                    self.commands.show_no_def_topic_msg()
+                    return
+
+            file_message = {
+                "file_size": len(content),
+                "filename": filename,
+                "file": str(content)
+            }
+
+            self.publish(topic, file_message, self.messenger.SEND_FILE)
 
         elif client_input.startswith("/"):
             # at this point would be an unknown command

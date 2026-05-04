@@ -154,11 +154,17 @@ class MessageProtocol:
     DISCON_CODE = 4
     SUBCRIBE_CODE = 5
     UNSUBCRIBE_CODE = 6
+    SEND_FILE = 7
 
-    def __init__(self, is_server: bool, id: str):
+    PEER_CONN = 10
+    PEER_DISCON = 11
+    PEER_CLIENT_REQ = 12
+
+    def __init__(self, is_server: bool, id: str, uid: str = ""):
         self.client_serv_flag = 1 if is_server else 0
         self.id = id
         self.id_len = len(id)
+        self.uid = uid
 
 
     def gen_msg(self, 
@@ -170,6 +176,7 @@ class MessageProtocol:
             "msg_id": 0, # TODO: Mutex for a global counter. Or attach to id
             "type_flag": 1 if self.client_serv_flag else 0,
             "id": self.id,
+            "uid": self.uid,
             "code": msg_code,
             "message": message
         }

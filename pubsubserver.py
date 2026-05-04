@@ -15,6 +15,8 @@ from the server.
 import json
 import sys
 import socket
+import select
+from uuid import uuid4
 from dataclasses import dataclass
 from typing import Optional
 from threading import Lock, Thread
@@ -37,6 +39,12 @@ class ServErrCode:
     OK_CODE = 0
     DUP_CLIENT_CODE = 1
     UNKNOWN_CLIENT_CODE = 2
+    CANNOT_CONNECT_PEER = 3
+    INCOMPATIBLE_PEER = 4
+    CANNOT_CONNECT_SELF = 5
+    DIRECTLY_CONNECTED_PEER = 6
+    DUP_SERVER_ID = 7
+    ALREADY_CONNECTED = 8
 
 
 ### Classes ####################################################################
@@ -47,42 +55,6 @@ class ServerProgramArgs:
         self.listenOnPort: Optional[str] = None
         self.servers: list[Server] = []
         self.error: bool = False
-
-class PeerConnections:
-    def __init__(self):
-        self.peers: list[Connection] = []
-
-    @staticmethod
-    def show_cannot_connect_peer_msg(argvalue: str) -> None:
-        print_stderr(f"{PROGRAM}: can't connect to peer \"{argvalue}\"")
-
-    @staticmethod
-    def show_incompatible_peer_msg(argvalue: str) -> None:
-        print_stderr(f"{PROGRAM}: Peer server not found at \"{argvalue}\"")
-
-    @staticmethod
-    def show_cannot_connect_self_msg() -> None:
-        print_stderr(f"{PROGRAM}: Can't connect to self as peer")
-
-    @staticmethod
-    def show_already_connected_peer_msg(argvalue: str) -> None:
-        print_stderr(
-            f"{PROGRAM}: Already connected to peer server at \"{argvalue}\""
-        )
-
-    @staticmethod
-    def show_dupe_server_peer_id_msg(argvalue: str) -> None:
-        print_stderr(f"{PROGRAM}: Unable to connect to server \"{argvalue}\" " \
-            "due to common server IDs")
-
-    @staticmethod
-    def show_peer_connected_msg(argvalue: str, serverid: str) -> None:
-        print_stdout(
-            f"{PROGRAM}: Connected to peer \"{serverid}\" at \"{argvalue}\"")
-
-    @staticmethod
-    def show_received_peer_connection_msg(serverid: str) -> None:
-        print_stdout(f"{PROGRAM}: Connection received from peer \"{serverid}\"")
 
 
 class ClientConnection():
@@ -130,19 +102,198 @@ class ClientConnection():
                             print("unknown op")
                             continue;
                 except Exception as e:
-                    print(e)
                     continue
 
         return False
 
 
+
+class PeerConnections:
+    @staticmethod
+    def show_cannot_connect_peer_msg(argvalue: str) -> None:
+        print_stderr(f"{PROGRAM}: can't connect to peer \"{argvalue}\"")
+
+    @staticmethod
+    def show_incompatible_peer_msg(argvalue: str) -> None:
+        print_stderr(f"{PROGRAM}: Peer server not found at \"{argvalue}\"")
+
+    @staticmethod
+    def show_cannot_connect_self_msg() -> None:
+        print_stderr(f"{PROGRAM}: Can't connect to self as peer")
+
+    @staticmethod
+    def show_already_connected_peer_msg(argvalue: str) -> None:
+        print_stderr(
+            f"{PROGRAM}: Already connected to peer server at \"{argvalue}\""
+        )
+
+    @staticmethod
+    def show_dupe_server_peer_id_msg(argvalue: str) -> None:
+        print_stderr(f"{PROGRAM}: Unable to connect to server \"{argvalue}\" " \
+            "due to common server IDs")
+
+    @staticmethod
+    def show_peer_connected_msg(argvalue: str, serverid: str) -> None:
+        print_stdout(
+            f"{PROGRAM}: Connected to peer \"{serverid}\" at \"{argvalue}\"")
+
+    @staticmethod
+    def show_received_peer_connection_msg(serverid: str) -> None:
+        print_stdout(f"{PROGRAM}: Connection received from peer \"{serverid}\"")
+
+
 class PubSubServer:
-    def __init__(self, server_id: str):
+    def __init__(self, server_id: str, ip, port):
         self.id = server_id
-        self.messenger = MessageProtocol(is_server=True, id=self.id)
+        self.ip = ip
+        self.port = port
+        self.uid = str(uuid4())
+        self.messenger = MessageProtocol(is_server=True, id=self.id, uid=self.uid)
         self.clients: list[ClientConnection] = []
         self._clients_lock = Lock()
 
+
+        self.peers = []
+        # self.peers = [
+        # { "id": "Server_A", "socket": <socket_obj>, "address": "127.0.0.1:5000" },
+        # ]
+        self._peers_lock = Lock()
+
+        self.federation_map = {}
+        # self.federation_map = {
+        #     "Server_A": "uuid-111",
+        # }
+        self._federation_map_lock = Lock()
+
+    # --- Peer Management --- #
+    
+    def attempt_connection_to_peer(self, server: str, serv_port: str) -> tuple[int, Connection]:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        connection: Connection = Connection(sock)
+
+        try:
+            if serv_port.isdigit():
+                port = int(serv_port)
+            else:
+                port = serv_port
+
+            serverAddr = socket.getaddrinfo(
+                server, port, socket.AF_INET, socket.SOCK_STREAM
+            )
+
+            connection.sock.connect(serverAddr[0][4])
+            connection.port = serverAddr[0][4][1]
+
+        except Exception as e:
+            connection.error = True
+            sock.close()
+            return (ServErrCode.CANNOT_CONNECT_PEER, connection)
+
+        return (ServErrCode.OK_CODE, connection)
+
+
+    def handshake_with_peer(self, conn: Connection):
+        msg = self.messenger.gen_msg(self.messenger.PEER_CONN)
+        self.messenger.send_msg(conn.sock, self.messenger.encode_msg(msg))
+        
+        conn.sock.settimeout(0.5)
+        try:
+            data = conn.sock.recv(4)
+            print(data.decode)
+        except socket.timeout:
+            print("timeout")
+
+    def recv_handshake_req_from_peer(self, sock, msg_data) -> tuple[int, None | dict]:
+        return 0, None
+
+    # def init_peer_connection(self, conn: Connection):
+    #     # A server asking for a peer connection
+    #     # Handle like the server is a client
+    #
+    #     # Send my data to the peer im connecting to
+    #     known_peers = []
+    #     with self._federation_peers_lock:
+    #         for peer in self.federtion_peers:
+    #             known_peers.append(peer.identifier_obj)
+    #
+    #     msg = self.messenger.gen_msg(self.messenger.CONN_CODE, {"known_peers": known_peers})
+    #     msg = self.messenger.encode_msg(msg)
+    #     self.messenger.send_msg(conn.sock, msg)
+    #
+    #     conn.sock.settimeout(0.5)
+    #     # Check im getting data back, whether there's a naming conflict etc
+    #     try:
+    #         data = conn.sock.recv(4)
+    #         if len(data) < 4:
+    #             return ServErrCode.CANNOT_CONNECT_PEER, None
+    #         success, msg_len = self.messenger.decode_len_msg(data)
+    #         if not success:
+    #             return ServErrCode.CANNOT_CONNECT_PEER, None
+    #
+    #         raw_msg = conn.sock.recv(msg_len)
+    #         decoded_msg = self.messenger.decode_msg(raw_msg)
+    #         try:
+    #             msg_data = json.loads(decoded_msg)
+    #             id = msg_data["id"]
+    #
+    #             if id == self.id:
+    #                 return ServErrCode.CANNOT_CONNECT_SELF, None
+    #
+    #             with self._peers_lock:
+    #                 if any(p.id == self.id for p in self.peers):
+    #                     return ServErrCode.DIRECTLY_CONNECTED_PEER, None
+    #
+    #             # check federation
+    #             with self._federation_peers_lock:
+    #                 for peer in self.federtion_peers:
+    #                     print(peer)
+    #
+    #             return ServErrCode.OK_CODE, Peer(conn.sock, id)
+    #
+    #         except:
+    #             return ServErrCode.CANNOT_CONNECT_PEER, None
+    #
+    #     except socket.timeout:
+    #         return ServErrCode.CANNOT_CONNECT_PEER, None
+    #
+    #
+    # def recv_init_peer_connection(self, sock: socket.socket):
+    #     # A server receiving a peer connection
+    #     pass
+    #
+    #
+    #
+    # def connect_to_peers(self, potential_peers: list[Server]):
+    #     """Attempt to connect to any peer servers given 'peer_servers'.
+    #     Will attempt to do:
+    #         1. Connect to the given server
+    #         2. Validate it is communicating with a valid server
+    #         3. Check peer is not itself
+    #         4. Check if a connection has already been made with server
+    #         5. Check if this connection results in duplicate server_ids
+    #     """
+    #     for server in potential_peers:
+    #         err, connection= self.attempt_connection_to_peer(server.server, server.port)
+    #         connection.host = server.server         # HACK: UNSURE IF NEEDED
+    #         if connection.error: # Error of rule 1.
+    #             if err == ServErrCode.CANNOT_CONNECT_PEER:
+    #                 PeerConnections.show_cannot_connect_peer_msg(f"{server.server}:{server.port}")
+    #             connection.sock.close()
+    #             continue
+    #
+    #         err, peer = self.init_peer_connection(connection)
+    #         if err == ServErrCode.CANNOT_CONNECT_SELF:
+    #             PeerConnections.show_cannot_connect_self_msg()
+    #             connection.sock.close()
+    #             continue
+    #
+    #         if peer != None:
+    #             with self._peers_lock:
+    #                 self.peers.append(peer)
+    #
+    #             with self._federation_peers_lock:
+    #                 # HACK: ^
+    #                 self.peers.append(peer)
 
     # --- Client Management --- #
 
@@ -198,7 +349,7 @@ class PubSubServer:
                         "msg": message,
                         "comms": f"{publishing_server}:{id}",
                     }
-                    self.relay_published_msg(client, topic, msg)
+                    self.relay_published_msg(topic, msg)
                     return self.messenger.PUBLISH_CODE
                 case self.messenger.SUBCRIBE_CODE:
                     topic = msg_data["topic"]
@@ -208,6 +359,19 @@ class PubSubServer:
 
                 case self.messenger.DISCON_CODE:
                     return self.messenger.DISCON_CODE
+                case self.messenger.SEND_FILE:
+                    topic = msg_data["topic"]
+                    publishing_server = msg_data["publishing_server"]
+                    file_data = msg_data["msg"]
+
+                    msg = {
+                        "topic": topic,
+                        "msg": file_data,
+                        "comms": f"{publishing_server}:{id}"
+                    }
+
+                    self.relay_sent_file(topic, msg)
+                    return self.messenger.SEND_FILE
                 case _:
                     print("unknown msg code")
 
@@ -251,7 +415,14 @@ class PubSubServer:
 
 
     # --- Message Forwarding --- #
-    def relay_published_msg(self, client: ClientConnection, topic, msg: dict):
+    def relay_sent_file(self, topic, msg: dict):
+        for c in self.get_clients():
+            if c.matches_subscription(topic, msg):
+                raw_msg = self.messenger.gen_msg(self.messenger.SEND_FILE, msg)
+                self.messenger.send_msg(c.sock, self.messenger.encode_msg(raw_msg))
+
+
+    def relay_published_msg(self, topic, msg: dict):
         for c in self.get_clients():
             if c.matches_subscription(topic, msg):
                 raw_msg = self.messenger.gen_msg(
@@ -272,7 +443,7 @@ class PubSubServer:
 
 
     def initialise_connection(self, 
-            sock: socket.socket) -> tuple[int, ClientConnection | None]:
+            sock: socket.socket) -> tuple[int, ClientConnection | dict | None]:
         sock.settimeout(0.5) # time to wait to ensure known client
         try:
             data = sock.recv(4)
@@ -292,17 +463,27 @@ class PubSubServer:
                 # HACK: Doesn't work for peer connections
                 msg_data = json.loads(decoded_msg)
                 header = msg_data["header"]
+                type_flag = msg_data["type_flag"]
                 client_id = msg_data["id"]
 
-                if header != "1588":
-                    self.show_unknown_client_msg()
-                    return (ServErrCode.UNKNOWN_CLIENT_CODE, None)
-                elif self.is_duplicate_client_id(client_id):
-                    self.show_client_duplicate_msg(client_id)
-                    return (ServErrCode.DUP_CLIENT_CODE, None)
+                if type_flag == 0:
+                    if header != "1588":
+                        self.show_unknown_client_msg()
+                        return (ServErrCode.UNKNOWN_CLIENT_CODE, None)
+                    elif self.is_duplicate_client_id(client_id):
+                        self.show_client_duplicate_msg(client_id)
+                        return (ServErrCode.DUP_CLIENT_CODE, None)
 
-                client: ClientConnection = ClientConnection(sock, client_id)
-                return (ServErrCode.OK_CODE, client)
+                    client: ClientConnection = ClientConnection(sock, client_id)
+                    return (ServErrCode.OK_CODE, client)
+                else:
+                    if header != "1588":
+                        self.show_unknown_client_msg()
+                        return (ServErrCode.UNKNOWN_CLIENT_CODE, None)
+
+                    peer = self.recv_handshake_req_from_peer(sock, msg_data)
+                    return (ServErrCode.OK_CODE, None)
+
 
             except (json.JSONDecodeError, TypeError, KeyError):
                 self.show_unknown_client_msg()
@@ -318,6 +499,7 @@ class PubSubServer:
         try:
             err, connected_program = self.initialise_connection(connection_socket)
             connection_socket.settimeout(None) # remove timeout used in ^^
+
             if err == ServErrCode.UNKNOWN_CLIENT_CODE:
                 connection_socket.close()
                 return
@@ -330,13 +512,16 @@ class PubSubServer:
             elif connected_program == None:
                 connection_socket.close()
                 return
-            else:
+            elif isinstance(connected_program, ClientConnection):
                 self.show_client_connected_msg(connected_program.id)
                 raw_msg = self.messenger.gen_msg(self.messenger.OK_CODE)
                 self.messenger.send_msg(connection_socket,
                                         self.messenger.encode_msg(raw_msg))
                 self.add_client(connected_program)
                 self.start_receiving_from_client(connected_program)
+            else:
+                print("is peer")
+
         except Exception as e:  # HACK: This needs changing to be more useful
             print(e, sys.stderr)
 
@@ -344,8 +529,17 @@ class PubSubServer:
     # --- Server Commands Handling --- #
     def handle_user_input(self):
         while True:
-            continue
+            try:
+                ready, _, _ = select.select([sys.stdin], [], [], 0.2)
+                if ready:
+                    server_input = sys.stdin.readline().rstrip().strip()
+                    self.process_user_input(server_input)
+            except EOFError:
+                print("EOF EXCEPTION")
+                return
 
+    def process_user_input(self, user_input):
+        pass
 
     # --- Run Handling --- #
 
@@ -531,19 +725,6 @@ def attempt_listen(serv_port: str | None) -> Connection:
     return connection
 
 
-def connectToPeers(peer_servers: list[Server]) -> PeerConnections | None:
-    """Attempt to connect to any peer servers given 'peer_servers'.
-    Will attempt to do:
-        1. Connect to the given server
-        2. Validate it is communicating with a valid server
-        3. Check peer is not itself
-        4. Check if a connection has already been made with server
-        5. Check if this connection results in duplicate server_ids
-    """
-    peerConnections: PeerConnections = PeerConnections()
-
-    return None
-
 ### MAIN #######################################################################
 def main():
     
@@ -568,11 +749,9 @@ def main():
     # TODO: Move to function VV
     print_stderr(f"{PROGRAM}: listening on port {connection.port}") 
 
-    ## Connecting to Peer Servers
-    # peer_connections: PeerConnections | None = connectToPeers(arguments.servers)
-
     ## Server Runtime Behaviour
-    server: PubSubServer = PubSubServer(arguments.server_id)
+    server: PubSubServer = PubSubServer(arguments.server_id, connection.host, connection.port)
+    # server.connect_to_peers(arguments.servers)
     server.run(connection)
 
 if __name__ == "__main__":
