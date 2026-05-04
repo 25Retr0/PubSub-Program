@@ -74,6 +74,11 @@ class ClientConnection():
             topics.append(sub.topic)
         return topics 
 
+    def remove_subscriptions(self, topic):
+        for i, sub in enumerate(self.subscriptions):
+            if sub.topic == topic:
+                self.subscriptions.pop(i)
+
     def matches_subscription(self, topic, msg):
         # If the given topic matches and no filter is present then just send
         for sub in self.subscriptions:
@@ -155,7 +160,7 @@ class PubSubServer:
 
         self.peers = []
         # self.peers = [
-        # { "id": "Server_A", "socket": <socket_obj>, "address": "127.0.0.1:5000" },
+        # { "id": "Server_A", "socket": <socket_obj>, "address": "127.0.0.1:5000", uid: "uuid-111" },
         # ]
         self._peers_lock = Lock()
 
@@ -164,6 +169,11 @@ class PubSubServer:
         #     "Server_A": "uuid-111",
         # }
         self._federation_map_lock = Lock()
+
+        # NOTE: current plan for notifying -> have list of the servers that have seen this
+        # somewhere in the messge. And then if you haven't seen this, or have peers that haven't
+        # seen this, then record or pass it in. If you dont meet either of those, just drop packet
+        # Last updated timestamp on packet notifiers. To make sure it's the most recent data
 
     # --- Peer Management --- #
     
@@ -328,8 +338,12 @@ class PubSubServer:
                     c.subscriptions.append(sub)
                     break
 
-    def remove_sub_from_client(self, topic):
-        pass
+    def remove_sub_from_client(self, client: ClientConnection, topic: str):
+        with self._clients_lock:
+            for c in self.clients:
+                if c == client:
+                    c.remove_subscriptions(topic)
+                    
 
     def process_msg(self, client: ClientConnection, msg_data: dict):
         try:
@@ -356,6 +370,12 @@ class PubSubServer:
                     op = msg_data["op"]
                     arg = msg_data["arg"]
                     self.add_sub_to_client(client, Subscription(topic, op=op, arg=arg))
+                case self.messenger.UNSUBCRIBE_CODE:
+                    topic = msg_data["topic"]
+
+                    for c in self.get_clients():
+                        if c.id == id:
+                            self.remove_sub_from_client(c, topic)
 
                 case self.messenger.DISCON_CODE:
                     return self.messenger.DISCON_CODE

@@ -43,7 +43,7 @@ class Commands:
     def __init__(self):
         # Strings
         self.subscribe = "/subscribe"
-        self.unsubcribe = "/unsubscribe"
+        self.unsubscribe = "/unsubscribe"
         self.topic = "/topic"
         self.sendfile = "/sendfile"
         self.listsubs = "/listsubs"
@@ -84,6 +84,7 @@ class Commands:
     def get_usage_cmd(self, command: str) -> str:
         match command:
             case self.subscribe: return f"{self.subscribe} topic [filter]"
+            case self.unsubscribe: return f"{self.unsubscribe} topic"
             case self.topic: return f"{self.topic} topic"
             case self.publish: return f"{self.publish} topic message"
             case self.listsubs: return f"{self.listsubs}"
@@ -245,6 +246,8 @@ class Client:
         else:
             split_name = filename.split(separator)
             unchanged = separator.join(split_name[:-1])
+            if filename.startswith(separator):
+                unchanged = separator + unchanged
             return f"{unchanged}{separator}{n}_{filename}"
 
     def receive_from_server(self, conn: Connection) -> None:
@@ -328,13 +331,17 @@ class Client:
                 self.notify(self.messenger.SUBCRIBE_CODE, subscription.to_json_msg())
 
         # /unsubscribe topic
-        elif client_input.startswith(self.commands.unsubcribe):
+        elif client_input.startswith(self.commands.unsubscribe):
             unsub_info = split_args(client_input)
             if len(unsub_info) != 2:
-                self.commands.show_unknown_argumemts_msg(self.commands.unsubcribe)
+                self.commands.show_unknown_argumemts_msg(self.commands.unsubscribe)
                 return
 
             topic = unsub_info[1]
+            if topic.strip() == "":
+                self.commands.show_unknown_argumemts_msg(self.commands.unsubscribe)
+                return
+
             if not is_valid_topic(topic):
                 self.commands.show_invalid_topic_msg(topic)
                 return
@@ -342,7 +349,7 @@ class Client:
             subscription = Subscription(topic)
             removed = self.remove_subscriptions(subscription)
             if removed:
-                self.notify(self.messenger.SUBCRIBE_CODE, subscription.to_json_msg())
+                self.notify(self.messenger.UNSUBCRIBE_CODE, subscription.to_json_msg())
 
         # /listsubs
         elif client_input.startswith(self.commands.listsubs):
@@ -357,6 +364,7 @@ class Client:
 
             for sub in self.get_subscriptions():
                 print_stdout(str(sub))
+
         # /sendfile filename [topic]
         elif client_input.startswith(self.commands.sendfile):
             info = split_args(client_input)

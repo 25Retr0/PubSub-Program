@@ -103,8 +103,7 @@ def is_valid_topic(topic: str) -> bool:
         - consist of letters, numbers, spaces, and/or '/' (forward slash)
         Returns True if conditions met, otherwise False
     """
-    # Check start character is a letter
-    start_letter = topic[0]     # No index error -> non-empty from parsing
+    start_letter = topic[0]
     if not start_letter.isalpha():
         return False
 
@@ -137,12 +136,15 @@ def split_args(text: str, delimiter=" ", quote_char='"') -> list[str]:
         if char == quote_char:
             in_quotes = not in_quotes
         elif char == delimiter and not in_quotes:
-            result.append("".join(current_tokens).strip())
+            if current_tokens != []:
+                result.append("".join(current_tokens).strip())
             current_tokens = []
         else:
             current_tokens.append(char)
 
-    result.append("".join(current_tokens).strip())
+    if current_tokens != []:
+        result.append("".join(current_tokens).strip())
+
     return result
 
 ### Protocol + Protocol Functions ##############################################
