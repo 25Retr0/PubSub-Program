@@ -89,18 +89,51 @@ class ClientConnection():
     def __init__(self, sock: socket.socket, id: str):
         self.sock = sock
         self.id = id
-        self.subscriptions = []
+        self.subscriptions: list[Subscription] = []
 
     def __eq__(self, other) -> bool:
         if isinstance(other, ClientConnection):
             return self.id == other.id
         return False
 
-    def get_topics(self):
+    def get_subscriptions(self):
         topics = []
         for sub in self.subscriptions:
             topics.append(sub.topic)
-        return topics
+        return topics 
+
+    def matches_subscription(self, topic, msg):
+        # If the given topic matches and no filter is present then just send
+        for sub in self.subscriptions:
+            if topic == sub.topic and sub.op == "" and sub.arg == "":
+                return True
+            elif topic == sub.topic:
+                # check filter
+                try:
+                    # (a) message is a numerical value (float)
+                    msg_value = float(msg["msg"])
+                    # and (b) value of message meets condition
+                    match sub.op:
+                        case "<":
+                            if msg_value < float(sub.arg): return True
+                        case "<=":
+                            if msg_value <= float(sub.arg): return True
+                        case ">":
+                            if msg_value > float(sub.arg): return True
+                        case ">=":
+                            if msg_value >= float(sub.arg): return True
+                        case "==":
+                            if msg_value == float(sub.arg): return True
+                        case "!=":
+                            if msg_value != float(sub.arg): return True
+                        case _:
+                            print("unknown op")
+                            continue;
+                except Exception as e:
+                    print(e)
+                    continue
+
+        return False
 
 
 class PubSubServer:
@@ -143,6 +176,7 @@ class PubSubServer:
                 if c == client:
                     c.subscriptions.append(sub)
                     break
+
     def remove_sub_from_client(self, topic):
         pass
 
@@ -157,14 +191,20 @@ class PubSubServer:
                     topic = msg_data["topic"]
                     message = msg_data["msg"]
                     publishing_server = msg_data["publishing_server"]
-                    message = f"{topic}: {message} ({publishing_server}:{id})"
-                    self.relay_published_msg(client, topic, message)
+                    message_full = f"{topic}: {message} ({publishing_server}:{id})"
+                    msg = {
+                        "messge_full": message_full,
+                        "topic": topic,
+                        "msg": message,
+                        "comms": f"{publishing_server}:{id}",
+                    }
+                    self.relay_published_msg(client, topic, msg)
                     return self.messenger.PUBLISH_CODE
                 case self.messenger.SUBCRIBE_CODE:
                     topic = msg_data["topic"]
-                    op = msg_data["op"] or ""
-                    arg = msg_data["arg"] or ""
-                    self.add_sub_to_client(client, Subscription(topic, op, arg))
+                    op = msg_data["op"]
+                    arg = msg_data["arg"]
+                    self.add_sub_to_client(client, Subscription(topic, op=op, arg=arg))
 
                 case self.messenger.DISCON_CODE:
                     return self.messenger.DISCON_CODE
@@ -211,11 +251,11 @@ class PubSubServer:
 
 
     # --- Message Forwarding --- #
-    def relay_published_msg(self, client: ClientConnection, topic, msg: str):
+    def relay_published_msg(self, client: ClientConnection, topic, msg: dict):
         for c in self.get_clients():
-            if topic in c.get_topics():
+            if c.matches_subscription(topic, msg):
                 raw_msg = self.messenger.gen_msg(
-                    self.messenger.PUBLISH_CODE, msg)
+                  self.messenger.PUBLISH_CODE, msg)
                 self.messenger.send_msg(c.sock,
                     self.messenger.encode_msg(raw_msg))
 

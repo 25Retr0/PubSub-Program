@@ -13,6 +13,7 @@ the server.
 """
 
 import json
+from re import split
 import sys
 import socket
 from pubsubshared import *
@@ -53,7 +54,7 @@ class Commands:
         print_stderr(f"{PROGRAM}: unknown command")
 
     def show_unknown_argumemts_msg(self, command: str) -> None:
-        print_stderr(f"{PROGRAM}: unknown arguments(s) - usage: " \
+        print_stderr(f"{PROGRAM}: unknown argument(s) - usage: " \
             f"{self.get_usage_cmd(command)}")
 
     def show_no_def_topic_msg(self) -> None:
@@ -64,6 +65,12 @@ class Commands:
 
     def show_invalid_topic_msg(self, topic: str) -> None:
         show_error(Errors.INVALID_TOPIC_CODE, topic=topic)
+
+    def show_invalid_filter_msg(self, filter):
+        print_stderr(f"{PROGRAM}: invalid filter string \"{filter}\"")
+
+    def show_identical_sub_msg(self) -> None:
+        print_stderr(f"{PROGRAM}: identical subscription ignored")
 
     def show_unsubscribed(self, topic):
         print_stderr(f"{PROGRAM}: unsubscribed from messages about \"{topic}\"")
@@ -76,6 +83,8 @@ class Commands:
         match command:
             case self.subscribe: return f"{self.subscribe} topic [filter]"
             case self.topic: return f"{self.topic} topic"
+            case self.publish: return f"{self.publish} topic message"
+            case self.listsubs: return f"{self.listsubs}"
             case _: return "Unknown usage"
 
 
@@ -130,7 +139,14 @@ class Client:
 
     def add_subscription(self, subscription: Subscription):
         with self._subscriptions_lock:
+            # check if it already exists
+            for sub in self.subscriptions:
+                if sub == subscription:
+                    self.commands.show_identical_sub_msg()
+                    return False
+
             self.subscriptions.append(subscription)
+        return True
 
     def get_subscriptions(self):
         with self._subscriptions_lock:
@@ -141,7 +157,9 @@ class Client:
             for i, sub in enumerate(self.subscriptions):
                 if sub == subscription:
                     self.subscriptions.pop(i)
+                    self.commands.show_unsubscribed(subscription.topic)
                     return True
+        self.commands.show_failed_unsubscribe(subscription.topic)
         return False
 
     def publish(self, topic: str, message: str) -> int:
@@ -174,7 +192,7 @@ class Client:
         code = msg_data["code"]
 
         if code == self.messenger.PUBLISH_CODE:
-            print(msg_data["message"])
+            print_stdout(msg_data["message"]["messge_full"])
 
     def receive_from_server(self, conn: Connection) -> None:
         while self.get_error_code() == Errors.OK and not self.did_client_quit():
@@ -212,55 +230,85 @@ class Client:
             self.notify(self.messenger.DISCON_CODE)
             self.set_error_code(Errors.OK)
             return
+        # /topic topic
         elif client_input.startswith(self.commands.topic):
-            topic_info = client_input.split(" ")
+            topic_info = split_args(client_input)
             if len(topic_info) != 2:
                 self.commands.show_unknown_argumemts_msg(self.commands.topic)
+                return
+
             topic = topic_info[1].strip("\" ")
             if not is_valid_topic(topic):
                 self.commands.show_invalid_topic_msg(topic)
-            else:
-                self.set_default_topic(topic)
+                return
+            self.set_default_topic(topic)
+        # /publish topic message
         elif client_input.startswith(self.commands.publish):
-            publish_info = client_input.split(" ")
+            publish_info = split_args(client_input)
             if len(publish_info) != 3:
                 self.commands.show_unknown_argumemts_msg(self.commands.publish)
-            else:
-                topic, msg = publish_info[1].strip("\" "), publish_info[2].strip("\" ")
-                self.publish(topic, msg)
+                return
+            topic, msg = publish_info[1].strip("\" "), publish_info[2].strip("\" ")
+            self.publish(topic, msg)
+
+        # /subscribe topic [filter]
         elif client_input.startswith(self.commands.subscribe):
-            sub_info = client_input.split(" ")
-            if len(sub_info) != 2 and len(sub_info) != 3:
+            sub_info = split_args(client_input)
+            if not (len(sub_info) == 2 or len(sub_info) == 3):
                 self.commands.show_unknown_argumemts_msg(self.commands.subscribe)
-            
-            if len(sub_info) == 2:
-                topic = sub_info[1].strip("\" ")
-                if not is_valid_topic(topic):
-                    self.commands.show_invalid_topic_msg(topic)
-                else:
-                    subscription = Subscription(topic)
-                    self.add_subscription(subscription)
-                    self.notify(self.messenger.SUBCRIBE_CODE, subscription.to_json_msg())
+                return
+            topic = sub_info[1]
+
+            if not is_valid_topic(topic):
+                self.commands.show_invalid_topic_msg(topic)
+                return
+
+            subscription = Subscription(topic)
+            if len(sub_info) == 3:
+                added = subscription.add_filter(sub_info[2])
+                if not added:
+                    self.commands.show_invalid_filter_msg(sub_info[2])
+                    return
+
+            added = self.add_subscription(subscription)
+            if added:
+                self.notify(self.messenger.SUBCRIBE_CODE, subscription.to_json_msg())
+
+        # /unsubscribe topic
         elif client_input.startswith(self.commands.unsubcribe):
-            unsub_info = client_input.split(" ")
+            unsub_info = split_args(client_input)
             if len(unsub_info) != 2:
                 self.commands.show_unknown_argumemts_msg(self.commands.unsubcribe)
-            else:
-                topic = unsub_info.strip("\" ")
-                if not is_valid_topic(topic):
-                    self.commands.show_invalid_topic_msg(topic)
-                else:
-                    subscription = Subscription(topic)
-                    removed = self.remove_subscriptions(subscription)
-                    if removed:
-                        self.commands.show_unsubscribed(topic)
-                        self.notify(self.messenger.SUBCRIBE_CODE, subscription.to_json_msg())
-                    else:
-                        self.commands.show_failed_unsubscribe(topic)
+                return
+
+            topic = unsub_info[1]
+            if not is_valid_topic(topic):
+                self.commands.show_invalid_topic_msg(topic)
+                return
+
+            subscription = Subscription(topic)
+            removed = self.remove_subscriptions(subscription)
+            if removed:
+                self.notify(self.messenger.SUBCRIBE_CODE, subscription.to_json_msg())
+
+        # /listsubs
+        elif client_input.startswith(self.commands.listsubs):
+            list_info = split_args(client_input)
+            if len(list_info) != 1:
+                self.commands.show_unknown_argumemts_msg(self.commands.listsubs)
+                return
+
+            if len(self.get_subscriptions()) == 0:
+                print_stdout(f"No subscriptions")
+                return
+
+            for sub in self.get_subscriptions():
+                print_stdout(str(sub))
 
         elif client_input.startswith("/"):
             # at this point would be an unknown command
             self.commands.show_unknown_command_msg()
+            return
         elif client_input == "":
             # Empty strings are ignored
             return
@@ -268,10 +316,12 @@ class Client:
             topic = self.get_default_topic()
             if topic == None:
                 self.commands.show_no_def_topic_msg()
+                return
             elif not is_valid_message(client_input):
                 self.commands.show_invalid_message_msg()
-            else:
-                self.publish(topic, client_input.strip("\" "))
+                return
+            self.publish(topic, client_input.strip("\" "))
+
 
     def read_user_input(self) -> None:
         while self.get_error_code() == Errors.OK and not self.did_client_quit():
