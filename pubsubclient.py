@@ -320,7 +320,7 @@ class Client:
             elif not is_valid_message(client_input):
                 self.commands.show_invalid_message_msg()
                 return
-            self.publish(topic, client_input.strip("\" "))
+            self.publish(topic, client_input)
 
 
     def read_user_input(self) -> None:
