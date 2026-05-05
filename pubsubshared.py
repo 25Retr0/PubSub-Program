@@ -16,7 +16,7 @@ class Connection:
     sock: socket.socket
     error: bool = False
     port: str | int | bytes | None = None
-    host: str = ""
+    host: str | int = ""
 
 class Subscription:
     def __init__(self, topic: str, op = "", arg = ""):
@@ -161,6 +161,9 @@ class MessageProtocol:
     PEER_CONN = 10
     PEER_DISCON = 11
     PEER_CLIENT_REQ = 12
+    PEER_SELF_ID = 13
+    PEER_NAME_CLASH = 14
+    PEER_DIRECTLY_CONN = 15
 
     def __init__(self, is_server: bool, id: str, uid: str = ""):
         self.client_serv_flag = 1 if is_server else 0

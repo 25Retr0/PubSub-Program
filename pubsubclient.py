@@ -89,6 +89,7 @@ class Commands:
             case self.publish: return f"{self.publish} topic message"
             case self.listsubs: return f"{self.listsubs}"
             case self.sendfile: return f"{self.sendfile} filename [topic]"
+            case self.quit: return f"{self.quit}"
             case _: return "Unknown usage"
 
 
@@ -281,11 +282,16 @@ class Client:
                 return
 
     def handle_user_input(self, client_input):
-        if client_input == self.commands.quit:
-            self.set_client_quit(True)
-            self.notify(self.messenger.DISCON_CODE)
-            self.set_error_code(Errors.OK)
-            return
+        if client_input.startswith(self.commands.quit):
+            quit_info = client_input.split(" ")
+            if len(quit_info) == 1:
+                self.set_client_quit(True)
+                self.notify(self.messenger.DISCON_CODE)
+                self.set_error_code(Errors.OK)
+                return
+            else:
+                self.commands.show_unknown_argumemts_msg(self.commands.quit)
+                return
         # /topic topic
         elif client_input.startswith(self.commands.topic):
             topic_info = split_args(client_input)
