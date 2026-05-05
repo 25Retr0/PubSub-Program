@@ -672,7 +672,15 @@ def parse_arguments(arguments: list[str]) -> ClientProgramArgs:
         program_args.error = True
         return program_args
 
-    server, port = arguments[arg].split(":")
+    split_serv_port = arguments[arg].split(":")
+    if not (len(split_serv_port) == 1 or len(split_serv_port) == 2):
+        program_args.error = True
+
+    if len(split_serv_port) == 2:
+        server, port = split_serv_port[0], split_serv_port[1]
+    else:
+        server, port = "", split_serv_port[0]
+
     port = port.strip()
     server = server.strip()
     if (not port or server.startswith("--")): 
