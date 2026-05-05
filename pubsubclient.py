@@ -16,6 +16,7 @@ import json
 import sys
 import socket
 import ast
+from datetime import datetime
 from pubsubshared import *
 from dataclasses import dataclass
 import select
@@ -49,6 +50,7 @@ class Commands:
         self.listsubs = "/listsubs"
         self.publish = "/publish"
         self.quit = "/quit"
+        self.listlimits = "/listlimits"
 
     def show_unknown_command_msg(self) -> None:
         print_stderr(f"{PROGRAM}: unknown command")
@@ -90,6 +92,7 @@ class Commands:
             case self.listsubs: return f"{self.listsubs}"
             case self.sendfile: return f"{self.sendfile} filename [topic]"
             case self.quit: return f"{self.quit}"
+            case self.listlimits: return f"{self.listlimits}"
             case _: return "Unknown usage"
 
 
@@ -116,6 +119,25 @@ class Client:
 
         self.files_received = 0
         self._files_received_lock = Lock()
+        
+
+        self.limits = []
+
+    def show_limits(self):
+        display_list = []
+        for limit in self.limits:
+            if limit["rate"] != 0:
+                display_list.append(limit)
+
+        if len(display_list) == 0:
+            print_stdout(f"No limits")
+            return
+
+        for limit in display_list:
+            if " " in limit["topic"]:
+                print_stdout(f'/limit {self.client_id} \"{limit["topic"]}\" {limit["rate"]}')
+            else:
+                print_stdout(f'/limit {self.client_id} {limit["topic"]} {limit["rate"]}')
 
     def increment_and_get_files_received(self):
         with self._files_received_lock:
@@ -191,6 +213,25 @@ class Client:
             "msg": message,
             "publishing_server": self.connected_server_id,
         }
+
+        # check rate limit
+        limit_idx = 0
+        has_limit = False
+        for i, limit in enumerate(self.limits):
+            if limit["topic"] == topic:
+                has_limit = True
+                break
+
+        if has_limit:
+            limit = self.limits[limit_idx]
+            timediff = (datetime.now() - limit["time_of_last_pub"]).total_seconds()
+            if not limit["has_sent"]:
+                limit["has_sent"] = True
+                limit["time_of_last_pub"] = datetime.now()
+            elif timediff < limit["rate"]:
+                print_stderr(f"{PROGRAM}: message publication failed due to rate limit")
+                return 0
+
         if code != None:
             msg = self.messenger.gen_msg(code, message_data)
         else:
@@ -212,6 +253,32 @@ class Client:
 
         if code == self.messenger.PUBLISH_CODE:
             print_stdout(msg_data["message"]["messge_full"])
+        elif code == self.messenger.LIMIT_CODE:
+            topic = msg_data["message"]["topic"]
+            rate = msg_data["message"]["n"]
+
+            new_limit = {
+                "topic": topic,
+                "rate": rate,
+                "time_of_last_pub": datetime.now(),
+                "has_sent": False
+            }
+
+            limit_found = False
+            limit_idx = 0
+            for i, limit in enumerate(self.limits):
+                if limit["topic"] == topic:
+                    limit_found = True
+                    limit_idx = i
+                    break
+
+            if limit_found:
+                self.limits[limit_idx] = new_limit
+            else:
+                self.limits.append(new_limit)
+
+            print_stdout(f"{PROGRAM}: you are rate limited on topic \"{topic}\" to {rate} seconds between messages")
+
         elif code == self.messenger.SEND_FILE:
             file_size = msg_data["message"]["msg"]["file_size"]
             file_name = msg_data["message"]["msg"]["filename"]
@@ -231,6 +298,10 @@ class Client:
                     file.write(ast.literal_eval(file_content)) # encode as it is passed as a str
             except:
                 print_stderr(f"{PROGRAM}: cannot save file \"{saved_file_name}\"")
+        elif code == self.messenger.DISCON_CODE:
+            self.set_client_quit(True)
+            print_stdout(f"{PROGRAM}: exiting due to server shutdown")
+            self.set_error_code(Errors.OK)
 
     def change_file_name(self, filename):
         # get dir separator
@@ -307,6 +378,7 @@ class Client:
             self.set_default_topic(topic)
         # /publish topic message
         elif client_input.startswith(self.commands.publish):
+            # check rate limit
             publish_info = split_args(client_input)
             if len(publish_info) != 3:
                 self.commands.show_unknown_argumemts_msg(self.commands.publish)
@@ -414,6 +486,13 @@ class Client:
             }
 
             self.publish(topic, file_message, self.messenger.SEND_FILE)
+        elif client_input.startswith(self.commands.listlimits):
+            info = client_input.split(" ")
+            if len(info) != 1:
+                self.commands.show_unknown_argumemts_msg(self.commands.listlimits)
+                return
+            
+            self.show_limits()
 
         elif client_input.startswith("/"):
             # at this point would be an unknown command
@@ -468,6 +547,7 @@ class Errors:
     INVALID_SERVER_CODE = 8
     NON_UNIQUE_ID_CODE = 9
     ABRUPT_SERVER_CLOSE = 10
+    SERVER_SHUTDOWN = 11
 
     @staticmethod
     def usage_msg()-> str:
@@ -501,6 +581,10 @@ class Errors:
     @staticmethod
     def abrupt_server_close_msg() -> str:
         return f"{PROGRAM}: server disconnected - exiting"
+
+    @staticmethod
+    def server_shutdown_msg() -> str:
+        return f"{PROGRAM}: exiting due to server shutdown"
 
     @staticmethod
     def unknown_error_msg() -> str:

@@ -771,6 +771,13 @@ class PubSubServer:
                         self.messenger.send_msg(peer["socket"], msg)
                         peer["socket"].close()
 
+                with self._clients_lock:
+                    for client in self.clients:
+                        msg = self.messenger.gen_msg(self.messenger.DISCON_CODE)
+                        msg = self.messenger.encode_msg(msg)
+                        self.messenger.send_msg(client.sock, msg)
+                        client.sock.close()
+
                 self.set_did_quit(True)
                 return
             else:
@@ -811,7 +818,48 @@ class PubSubServer:
 
         # /limit clientid topic N
         elif user_input.startswith(self.commands.limit):
-            return
+            limit_info = split_args(user_input)
+
+            if len(limit_info) != 4:
+                self.commands.show_unknown_argumemts_msg(self.commands.limit)
+                return
+
+            clientid = limit_info[1]
+            topic = limit_info[2]
+            n = limit_info[3]
+
+
+            found_client = False
+            with self._clients_lock:
+                for client in self.clients:
+                    if client.id == clientid:
+                        found_client = True
+                        client_sock = client.sock
+
+            if not found_client:
+                print_stderr(f"{PROGRAM}: Client \"{clientid}\" is unknown")
+                return
+
+            if not is_valid_topic(topic):
+                self.commands.show_invalid_topic(topic)
+                return
+
+            try:
+                n = int(n)
+                if not (0 <= n <= 3600):
+                    print_stderr(f"{PROGRAM}: Rate limit must be 0 to 3600 seconds inclusive")
+                    return
+            except:
+                print_stderr(f"{PROGRAM}: Rate limit must be 0 to 3600 seconds inclusive")
+                return
+
+            message = {
+                "topic": topic,
+                "n": n
+            }
+            msg = self.messenger.gen_msg(self.messenger.LIMIT_CODE, message)
+            msg = self.messenger.encode_msg(msg)
+            self.messenger.send_msg(client_sock, msg)
 
         # unknown
         else:

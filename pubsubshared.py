@@ -161,6 +161,7 @@ class MessageProtocol:
     SUBCRIBE_CODE = 5
     UNSUBCRIBE_CODE = 6
     SEND_FILE = 7
+    LIMIT_CODE = 8
 
     PEER_CONN = 10
     PEER_DISCON = 11
