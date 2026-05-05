@@ -13,6 +13,7 @@ from the server.
 """
 
 import json
+from re import split
 import sys
 import socket
 import select
@@ -308,10 +309,10 @@ class PubSubServer:
         try:
             data = conn.sock.recv(4)
             if len(data) < 4:
-                return ServErrCode.CANNOT_CONNECT_PEER, None
+                return ServErrCode.INCOMPATIBLE_PEER, None
             success, msg_len = self.messenger.decode_len_msg(data)
             if not success:
-                return ServErrCode.CANNOT_CONNECT_PEER, None
+                return ServErrCode.INCOMPATIBLE_PEER, None
 
             raw_msg = conn.sock.recv(msg_len)
             decoded_msg = self.messenger.decode_msg(raw_msg)
@@ -338,11 +339,10 @@ class PubSubServer:
                 return ServErrCode.OK_CODE, peer
 
             except:
-                return ServErrCode.CANNOT_CONNECT_PEER, None
+                return ServErrCode.INCOMPATIBLE_PEER, None
 
         except socket.timeout:
-            print("timeout")
-            return ServErrCode.CANNOT_CONNECT_PEER, None
+            return ServErrCode.INCOMPATIBLE_PEER, None
 
 
     def connect_to_peers(self, potential_peers: list[Server]):
@@ -368,7 +368,11 @@ class PubSubServer:
 
             err, peer = self.init_peer_connection(connection)
             connection.sock.settimeout(None)
-            if err == ServErrCode.CANNOT_CONNECT_SELF:
+            if err == ServErrCode.INCOMPATIBLE_PEER:
+                PeerConnections.show_incompatible_peer_msg(argvalue)
+                connection.sock.close()
+                continue
+            elif err == ServErrCode.CANNOT_CONNECT_SELF:
                 PeerConnections.show_cannot_connect_self_msg()
                 connection.sock.close()
                 continue
@@ -761,7 +765,7 @@ class PubSubServer:
     def process_user_input(self, user_input):
         # /quit
         if user_input.startswith(self.commands.quit):
-            quit_info = user_input.split(" ")
+            quit_info = split_args(user_input)
             if len(quit_info) == 1:
                 # Notify peers and clients
                 with self._peers_lock:
@@ -786,7 +790,7 @@ class PubSubServer:
 
         # /listclients [-all]
         elif user_input.startswith(self.commands.listclients):
-            list_info = user_input.split(" ")
+            list_info = split_args(user_input)
             if not (len(list_info) == 1 or len(list_info) == 2):
                 self.commands.show_unknown_argumemts_msg(self.commands.listclients)
                 return
@@ -800,7 +804,7 @@ class PubSubServer:
 
         # /listpeers [-all]
         elif user_input.startswith(self.commands.listpeers):
-            list_info = user_input.split(" ")
+            list_info = split_args(user_input)
             if not (len(list_info) == 1 or len(list_info) == 2):
                 self.commands.show_unknown_argumemts_msg(self.commands.listpeers)
                 return
@@ -814,7 +818,38 @@ class PubSubServer:
 
         # /peer [server]:port
         elif user_input.startswith(self.commands.peer):
-            return
+            peer_info = split_args(user_input)
+
+            if len(peer_info) != 2:
+                self.commands.show_unknown_argumemts_msg(self.commands.peer)
+                return
+
+            server_port = peer_info[1]
+            if ":" not in server_port:
+                self.commands.show_unknown_argumemts_msg(self.commands.peer)
+                return
+            server_port = server_port.split(":")
+            if not (len(server_port) == 1 or len(server_port) == 2):
+                self.commands.show_unknown_argumemts_msg(self.commands.peer)
+                return
+
+            if len(server_port) == 2:
+                server, port = server_port[0], server_port[1]
+            else:
+                server, port = "", server_port[0]
+
+            port = port.strip()
+            server = server.strip()
+            if not port:
+                self.commands.show_unknown_argumemts_msg(self.commands.peer)
+                return
+
+
+            # attempt connections
+            peer_server = Server(port)
+            if server != "":
+                peer_server.server = server
+            self.connect_to_peers([peer_server])
 
         # /limit clientid topic N
         elif user_input.startswith(self.commands.limit):
