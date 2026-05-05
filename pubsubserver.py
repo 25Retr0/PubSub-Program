@@ -1,6 +1,16 @@
 """! @file pubsubserver.py
 @author William Kelly (s4882158)
-@ai Not Used
+@aitool google ai - the ai that pops up at the top of a google search
+@ai Inspiration
+@aidetails Google ai presented information on socket.recv() and checking the
+    timeout of it. It provided a small snippet of code showing the
+    socket.timeout and socket.error Exceptions
+@aidetails when doing abrupt client/server disconnection, google ai
+    presented the Exception for ConnectionResetError and BrokenPipe Errors
+    and inspired the use of them
+@aidetails google searching for alternatives to input() for an option that
+    didn't block. Google ai inspired use of the select library. And provided
+    a small snippet of example code
 """
 
 """ Specification - pubsubserver
@@ -32,7 +42,7 @@ QUEUED_CONNS = 5            # NOTE: This can be increased if needed.
 @dataclass()
 class Server:
     port: str
-    server: str = "localhost"
+    server: str = ""
 
 
 @dataclass()
@@ -298,7 +308,13 @@ class PubSubServer:
 
         # Send my data to the peer im connecting to
         with self._peers_lock:
-            known_peers = self.peers
+            direct_peers = self.peers
+
+        known_peers = []
+        for peer in direct_peers:
+            id = peer["id"]
+            uid = peer["uid"]
+            known_peers.append({"id": id, "uid": uid})
 
         msg = self.messenger.gen_msg(self.messenger.CONN_CODE, {"known_peers": known_peers})
         msg = self.messenger.encode_msg(msg)
@@ -312,6 +328,9 @@ class PubSubServer:
                 return ServErrCode.INCOMPATIBLE_PEER, None
             success, msg_len = self.messenger.decode_len_msg(data)
             if not success:
+                return ServErrCode.INCOMPATIBLE_PEER, None
+
+            if msg_len > 1000:
                 return ServErrCode.INCOMPATIBLE_PEER, None
 
             raw_msg = conn.sock.recv(msg_len)
@@ -368,7 +387,13 @@ class PubSubServer:
 
             err, peer = self.init_peer_connection(connection)
             connection.sock.settimeout(None)
-            if err == ServErrCode.INCOMPATIBLE_PEER:
+            if err == ServErrCode.OK_CODE and peer != None:
+                PeerConnections.show_peer_connected_msg(argvalue, peer["id"])
+                with self._peers_lock:
+                    self.peers.append(peer)
+                Thread(target=self.start_receiving_from_peer,
+                       args=(peer,), daemon=True).start()
+            elif err == ServErrCode.INCOMPATIBLE_PEER:
                 PeerConnections.show_incompatible_peer_msg(argvalue)
                 connection.sock.close()
                 continue
@@ -384,12 +409,6 @@ class PubSubServer:
                 PeerConnections.show_dupe_server_peer_id_msg(argvalue)
                 connection.sock.close()
                 continue
-            elif err == ServErrCode.OK_CODE and peer != None:
-                with self._peers_lock:
-                    self.peers.append(peer)
-                PeerConnections.show_peer_connected_msg(argvalue, peer["id"])
-                Thread(target=self.start_receiving_from_peer,
-                       args=(peer,), daemon=True).start()
             else:
                 print("eer: ", err)
 
@@ -460,20 +479,6 @@ class PubSubServer:
             for c in self.clients:
                 if c == client:
                     c.remove_subscriptions(topic)
-
-
-    def process_peer_msg(self, peer, msg_data):
-        try:
-            code = msg_data["code"]
-            match code:
-                case self.messenger.PEER_DISCON:
-                    return self.messenger.PEER_DISCON
-                case _:
-                    print("unknown code")
-
-        except (KeyError, TypeError) as e:
-            print(e)
-            print("bad client message")
 
 
     def process_msg(self, client: ClientConnection, msg_data: dict):
@@ -565,6 +570,12 @@ class PubSubServer:
         self.remove_client(client)
 
     def start_receiving_from_peer(self, peer):
+        # TODO:
+        # - Any published message received needs to be sent to my clients
+        # - gossiping published messages from other servers
+        # - gossiping about disconnected clients / peers
+        # - ^^ Receiving federation maps???
+
         while not self.did_server_quit():
             try:
                 data = peer["socket"].recv(4)
@@ -581,14 +592,13 @@ class PubSubServer:
 
                 try:
                     msg_data = json.loads(decoded_msg)
-                    return_code = self.process_peer_msg(peer, msg_data)
+                    code = msg_data["code"]
 
-                    if return_code == self.messenger.PEER_DISCON:
+                    if code == self.messenger.PEER_DISCON:
                         self.show_peer_shutdown_warning(msg_data["id"])
                         break;
 
                 except json.JSONDecodeError as e:
-                    print(e)
                     print("bad client message")
 
             except (ConnectionResetError, BrokenPipeError):
@@ -641,6 +651,9 @@ class PubSubServer:
             if not success:
                 self.show_unknown_client_msg()
                 return (ServErrCode.UNKNOWN_CLIENT_CODE, None)
+
+            if msg_len > 1000:
+                return ServErrCode.UNKNOWN_CLIENT_CODE, None
 
             raw_msg = sock.recv(msg_len)
             decoded_msg = self.messenger.decode_msg(raw_msg)

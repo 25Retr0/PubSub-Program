@@ -1,6 +1,10 @@
 """! @file pubsubclient.py
 @author William Kelly (s4882158)
-@ai Not Used
+@ai Used
+@ai Inspiration
+@aitool google ai
+@aidetails When researching how to pack an integer into a 4 byte header block
+    google ai presented the library struct
 """
 
 import socket

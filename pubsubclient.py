@@ -1,6 +1,19 @@
 """! @file pubsubclient.py
 @author William Kelly (s4882158)
-@ai Not Used
+@ai Used
+@aitool google ai - the ai that pops up at the top of a google search
+@ai Inspiration
+@aidetails Google ai presented information on socket.recv() and checking the
+    timeout of it. It provided a small snippet of code showing the
+    socket.timeout and socket.error Exceptions
+@aidetails when doing abrupt client/server disconnection, google ai
+    presented the Exception for ConnectionResetError and BrokenPipe Errors
+    and inspired the use of them
+@aidetails google searching for alternatives to input() for an option that
+    didn't block. Google ai inspired use of the select library. And provided
+    a small snippet of example code
+@aidetails searching for taking a str of bytes back into bytes for writing to
+    a file using ast.literal_eval was inspired by use of ai.
 """
 
 """ Specification - pubsubclient
@@ -222,6 +235,8 @@ class Client:
                 has_limit = True
                 break
 
+        # REF: knowledge of datetime library was learnt from the docs
+        # https://docs.python.org/3/library/datetime.html
         if has_limit:
             limit = self.limits[limit_idx]
             timediff = (datetime.now() - limit["time_of_last_pub"]).total_seconds()
@@ -294,6 +309,9 @@ class Client:
             print_stdout(f"{topic}: received file \"{saved_file_name}\" from {comms} ({file_size} bytes)")
 
             try:
+                # REF: knowledge of ast.literal_eval was further learnt from docs
+                # https://docs.python.org/3/library/ast.html#ast.literal_eval
+                # However, AI inspired use of this
                 with open(saved_file_name, "wb") as file:
                     file.write(ast.literal_eval(file_content)) # encode as it is passed as a str
             except:
@@ -515,7 +533,6 @@ class Client:
     def read_user_input(self) -> None:
         while self.get_error_code() == Errors.OK and not self.did_client_quit():
             try:
-                # BUG: Ref AI usage here
                 ready, _, _ = select.select([sys.stdin], [], [], 0.2)
                 if ready:
                     # WARNING: potential bug for windows systems
@@ -770,6 +787,9 @@ def handle_initial_connection(
 
         success, msg_len = MessageProtocol.decode_len_msg(data)
         if not success:
+            return Errors.INVALID_SERVER_CODE, client
+
+        if msg_len > 400:
             return Errors.INVALID_SERVER_CODE, client
 
         raw_msg = conn.sock.recv(msg_len)
