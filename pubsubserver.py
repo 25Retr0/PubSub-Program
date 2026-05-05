@@ -414,7 +414,6 @@ class PubSubServer:
         all_clients = self.get_all_clients()
 
 
-
     def close_client_connection(self, client: ClientConnection) -> bool:
         for c in self.get_clients():
             if client == c:
@@ -780,11 +779,31 @@ class PubSubServer:
 
         # /listclients [-all]
         elif user_input.startswith(self.commands.listclients):
-            return
+            list_info = user_input.split(" ")
+            if not (len(list_info) == 1 or len(list_info) == 2):
+                self.commands.show_unknown_argumemts_msg(self.commands.listclients)
+                return
+
+            if len(list_info) == 1:
+                self.list_clients()
+            elif len(list_info) == 2 and list_info[1] == self.commands.all:
+                self.list_clients_all()
+            else:
+                self.commands.show_unknown_argumemts_msg(self.commands.listclients)
 
         # /listpeers [-all]
         elif user_input.startswith(self.commands.listpeers):
-            return
+            list_info = user_input.split(" ")
+            if not (len(list_info) == 1 or len(list_info) == 2):
+                self.commands.show_unknown_argumemts_msg(self.commands.listpeers)
+                return
+
+            if len(list_info) == 1:
+                self.list_peers()
+            elif len(list_info) == 2 and list_info[1] == self.commands.all:
+                self.list_peers_all()
+            else:
+                self.commands.show_unknown_argumemts_msg(self.commands.listpeers)
 
         # /peer [server]:port
         elif user_input.startswith(self.commands.peer):

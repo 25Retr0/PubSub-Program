@@ -128,22 +128,26 @@ def is_valid_message(message: str) -> bool:
 
 
 def split_args(text: str, delimiter=" ", quote_char='"') -> list[str]:
-    result = [] 
-    current_tokens = []
+    result = []
+    current_token = ""
     in_quotes = False
+    has_content = False 
 
     for char in text:
         if char == quote_char:
             in_quotes = not in_quotes
+            has_content = True 
         elif char == delimiter and not in_quotes:
-            if current_tokens != []:
-                result.append("".join(current_tokens).strip())
-            current_tokens = []
+            if has_content:
+                result.append(current_token)
+                current_token = ""
+                has_content = False
         else:
-            current_tokens.append(char)
+            current_token += char
+            has_content = True
 
-    if current_tokens != []:
-        result.append("".join(current_tokens).strip())
+    if has_content:
+        result.append(current_token)
 
     return result
 

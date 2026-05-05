@@ -247,9 +247,10 @@ class Client:
         else:
             split_name = filename.split(separator)
             unchanged = separator.join(split_name[:-1])
+            file_name = split_name[-1]
             if filename.startswith(separator):
                 unchanged = separator + unchanged
-            return f"{unchanged}{separator}{n}_{filename}"
+            return f"{n}_{file_name}"
 
     def receive_from_server(self, conn: Connection) -> None:
         while self.get_error_code() == Errors.OK and not self.did_client_quit():
@@ -378,16 +379,24 @@ class Client:
                 self.commands.show_unknown_argumemts_msg(self.commands.sendfile)
                 return
 
-            filename = info[1]
+            filename = info[1].strip()
+
+            if filename == "":
+                self.commands.show_unknown_argumemts_msg(self.commands.sendfile)
+                return
 
             try:
                 with open(filename, "rb") as file:
                     content = file.read()
-            except FileNotFoundError:
+            except (FileNotFoundError, PermissionError):
                 self.commands.show_unable_to_open_file(filename)
                 return
 
-            if len(info) == 3:
+            
+            if len(info) == 3 and info[2].strip() == "":
+                self.commands.show_unknown_argumemts_msg(self.commands.sendfile)
+                return
+            elif len(info) == 3:
                 topic = info[2]
                 if not is_valid_topic(topic):
                     self.commands.show_invalid_topic_msg(topic)
