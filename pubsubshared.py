@@ -5,6 +5,10 @@
 @aitool google ai
 @aidetails When researching how to pack an integer into a 4 byte header block
     google ai presented the library struct
+@ai Debugging
+@aidetails In function split_args ai assisted in debugging incorrect implementations
+    These implementations had issues where empty spaces were propogated. Ai
+    suggested the addition of an extra boolean condition and that solution was used.
 """
 
 import socket
