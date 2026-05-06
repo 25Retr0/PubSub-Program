@@ -141,7 +141,7 @@ class ClientConnection():
                 # check filter
                 try:
                     # (a) message is a numerical value (float)
-                    msg_value = float(msg["msg"])
+                    msg_value = float(msg["message"]["msg"])
                     # and (b) value of message meets condition
                     match sub.op:
                         case "<":
@@ -160,6 +160,7 @@ class ClientConnection():
                             print("unknown op")
                             continue;
                 except Exception as e:
+                    print(e)
                     continue
 
         return False
@@ -258,7 +259,7 @@ class PubSubServer:
             for peer in self.peers:
                 dislay_list.append(peer["id"])
 
-        sorted(dislay_list)
+        display_list = sorted(dislay_list)
 
         if len(dislay_list) != 0:
             for id in dislay_list:
@@ -267,7 +268,16 @@ class PubSubServer:
             self.commands.show_no_peers_connected()
 
     def list_peers_all(self):
-        pass
+        with self._peer_federation_map_lock:
+            display_list = []
+
+        display_list = sorted(display_list)
+
+        if len(display_list) != 0:
+            print_stderr("TODO")
+        else:
+            self.commands.show_no_peers_connected()
+
 
     def get_peers(self):
         with self._peers_lock:
@@ -441,6 +451,14 @@ class PubSubServer:
 
     def list_clients_all(self):
         all_clients = self.get_all_clients()
+        display_list = []
+        
+        display_list = sorted(display_list)
+
+        if len(display_list) != 0:
+            print_stderr("TODO")
+        else:
+            self.commands.show_no_clients_connected()
 
 
     def close_client_connection(self, client: ClientConnection) -> bool:
@@ -584,6 +602,7 @@ class PubSubServer:
                     return_code = self.process_msg(client, msg_data)
 
                     if return_code == self.messenger.DISCON_CODE:
+                        # TODO: NOTIFY OTHER PEERS
                         break
 
                 except json.JSONDecodeError as e:
@@ -591,6 +610,7 @@ class PubSubServer:
                     print("bad client message")
 
             except ConnectionResetError:
+                # TODO: NOTIFY PEERS
                 break
 
         # When exiting loop client would have disconnected
@@ -638,6 +658,7 @@ class PubSubServer:
 
                     if code == self.messenger.PEER_DISCON:
                         self.show_peer_shutdown_warning(msg_data["id"])
+                        # TODO: NOTIFY PEERS
                         break;
                     elif code == self.messenger.PUBLISH_CODE:
                         self.relay_published_msg(topic, msg_data)
@@ -649,6 +670,7 @@ class PubSubServer:
 
             except (ConnectionResetError, BrokenPipeError):
                 self.show_peer_disconnected(peer["id"])
+                # TODO: NOTIFY PEERS
                 break;
 
         # remove peer connection from self._peers and then federation

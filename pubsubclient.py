@@ -88,7 +88,7 @@ class Commands:
         print_stderr(f"{PROGRAM}: identical subscription ignored")
 
     def show_unsubscribed(self, topic):
-        print_stderr(f"{PROGRAM}: unsubscribed from messages about \"{topic}\"")
+        print_stdout(f"{PROGRAM}: unsubscribed from messages about \"{topic}\"")
 
     def show_failed_unsubscribe(self, topic):
         print_stderr(f"{PROGRAM}: not subscribed to messages about \"{topic}\"")
