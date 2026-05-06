@@ -11,8 +11,8 @@ import socket
 import sys
 import json
 import struct
+from uuid import uuid4
 from dataclasses import dataclass
-from typing import Optional 
 
 ### Data Classes ###############################################################
 @dataclass
@@ -21,6 +21,35 @@ class Connection:
     error: bool = False
     port: str | int | bytes | None = None
     host: str | int = ""
+
+
+### Classes ####################################################################
+
+class MessageCache():
+    """Glorified queue."""
+
+    def __init__(self):
+        self.data = []
+        self.size = 0
+        self.max_size = 50
+
+    def new_msg(self, msg_id) -> bool:
+        if msg_id in self.data:
+            return False
+
+        if self.size == self.max_size:
+            self.data.pop(0)
+            self.data.append(msg_id)
+        else:
+            self.data.append(msg_id)
+            self.size += 1
+
+        return True
+
+    def __len__(self):
+        return self.size
+
+
 
 class Subscription:
     def __init__(self, topic: str, op = "", arg = ""):
@@ -167,6 +196,7 @@ class MessageProtocol:
     SEND_FILE = 7
     LIMIT_CODE = 8
 
+    IGNORE_CODE = 9
     PEER_CONN = 10
     PEER_DISCON = 11
     PEER_CLIENT_REQ = 12
@@ -183,12 +213,17 @@ class MessageProtocol:
 
     def gen_msg(self, 
                 msg_code: int, 
-                message: str | dict = ""
+                message: str | dict = "",
+                msg_id = None,
+                ttl = 10
     ) -> dict:
+        if msg_id == None:
+            msg_id = str(uuid4())
         return {
             "header": "1588",
-            "msg_id": 0, # TODO: Mutex for a global counter. Or attach to id
             "type_flag": 1 if self.client_serv_flag else 0,
+            "msg_id": msg_id,
+            "ttl": ttl,
             "id": self.id,
             "uid": self.uid,
             "code": msg_code,

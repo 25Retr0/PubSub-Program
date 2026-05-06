@@ -238,6 +238,8 @@ class PubSubServer:
         # seen this, then record or pass it in. If you dont meet either of those, just drop packet
         # Last updated timestamp on packet notifiers. To make sure it's the most recent data
 
+        self._msg_cache = MessageCache()
+        
     def set_did_quit(self, boolean):
         with self._did_quit_lock:
             self.did_quit = boolean
@@ -267,6 +269,10 @@ class PubSubServer:
     def list_peers_all(self):
         pass
 
+    def get_peers(self):
+        with self._peers_lock:
+            peers = list(self.peers)
+        return peers
 
     def remove_peer(self, peer):
         with self._peers_lock:
@@ -485,7 +491,12 @@ class PubSubServer:
         try:
             id = msg_data["id"]
             code = msg_data["code"]
+            msg_id = msg_data["msg_id"]
+            ttl = int(msg_data["ttl"])
             msg_data = msg_data["message"]
+
+            if ttl == 0:
+                return self.messenger.IGNORE_CODE
 
             match code:
                 case self.messenger.PUBLISH_CODE:
@@ -499,8 +510,19 @@ class PubSubServer:
                         "msg": message,
                         "comms": f"{publishing_server}:{id}",
                     }
-                    self.relay_published_msg(topic, msg)
+
+
+                    share_msg = self.messenger.gen_msg(
+                        msg_code=self.messenger.PUBLISH_CODE,
+                        message=msg,
+                        msg_id=msg_id,
+                        ttl=ttl-1
+                    )
+                    
+
+                    self.relay_published_msg(topic, share_msg)
                     return self.messenger.PUBLISH_CODE
+
                 case self.messenger.SUBCRIBE_CODE:
                     topic = msg_data["topic"]
                     op = msg_data["op"]
@@ -526,7 +548,14 @@ class PubSubServer:
                         "comms": f"{publishing_server}:{id}"
                     }
 
-                    self.relay_sent_file(topic, msg)
+                    share_msg = self.messenger.gen_msg(
+                        msg_code=self.messenger.SEND_FILE,
+                        message=msg,
+                        msg_id=msg_id,
+                        ttl=ttl-1
+                    )
+
+                    self.relay_sent_file(topic, share_msg)
                     return self.messenger.SEND_FILE
                 case _:
                     print("unknown msg code")
@@ -594,9 +623,26 @@ class PubSubServer:
                     msg_data = json.loads(decoded_msg)
                     code = msg_data["code"]
 
+                    if msg_data["ttl"] == 0:
+                        # Ignore message
+                        continue
+
+                    msg_data["ttl"] = int(msg_data["ttl"]) - 1
+                    topic = msg_data["message"]["topic"]
+
+                    msg_id = msg_data["msg_id"]
+
+                    if not self._msg_cache.new_msg(msg_id):
+                        # ignore as it has been seen already
+                        continue
+
                     if code == self.messenger.PEER_DISCON:
                         self.show_peer_shutdown_warning(msg_data["id"])
                         break;
+                    elif code == self.messenger.PUBLISH_CODE:
+                        self.relay_published_msg(topic, msg_data)
+                    elif code == self.messenger.SEND_FILE:
+                        self.relay_sent_file(topic, msg_data)
 
                 except json.JSONDecodeError as e:
                     print("bad client message")
@@ -611,20 +657,27 @@ class PubSubServer:
 
 
     # --- Message Forwarding --- #
-    def relay_sent_file(self, topic, msg: dict):
+    # HACK: Duplicated code
+    def relay_sent_file(self, topic, msg):
+        # Send to peers
+        for p in self.get_peers():
+            self.messenger.send_msg(p["socket"], self.messenger.encode_msg(msg))
+
+        # Send to my clients
         for c in self.get_clients():
             if c.matches_subscription(topic, msg):
-                raw_msg = self.messenger.gen_msg(self.messenger.SEND_FILE, msg)
-                self.messenger.send_msg(c.sock, self.messenger.encode_msg(raw_msg))
+                self.messenger.send_msg(c.sock, self.messenger.encode_msg(msg))
 
 
-    def relay_published_msg(self, topic, msg: dict):
+    def relay_published_msg(self, topic, msg):
+        # Send to peers
+        for p in self.get_peers():
+            self.messenger.send_msg(p["socket"], self.messenger.encode_msg(msg))
+
+        # Send to my clients
         for c in self.get_clients():
             if c.matches_subscription(topic, msg):
-                raw_msg = self.messenger.gen_msg(
-                  self.messenger.PUBLISH_CODE, msg)
-                self.messenger.send_msg(c.sock,
-                    self.messenger.encode_msg(raw_msg))
+                self.messenger.send_msg(c.sock, self.messenger.encode_msg(msg))
 
 
     # --- Connection Handling --- #
