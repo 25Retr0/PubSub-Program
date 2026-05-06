@@ -1,4 +1,4 @@
-"""! @file pubsubclient.py
+"""! @file pubsubshared.py
 @author William Kelly (s4882158)
 @ai Used
 @ai Inspiration
