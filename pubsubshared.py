@@ -203,7 +203,7 @@ class MessageProtocol:
     IGNORE_CODE = 9
     PEER_CONN = 10
     PEER_DISCON = 11
-    PEER_CLIENT_REQ = 12
+    FED_MAP_UPDATE = 12
     PEER_SELF_ID = 13
     PEER_NAME_CLASH = 14
     PEER_DIRECTLY_CONN = 15

@@ -11,6 +11,11 @@
 @aidetails google searching for alternatives to input() for an option that
     didn't block. Google ai inspired use of the select library. And provided
     a small snippet of example code
+@aidetails in merge_federation_maps, push_updated_maps, 
+    update_federation_map_and_notify. AI gave the code 
+        dt_string = now.strftime("%Y-%m-%d %H:%M:%S")
+        dt_object = datetime.strptime(dt_string, "%Y-%m-%d %H:%M:%S")
+    as apart of a snippet of how to convert datetime objects to and from strings
 """
 
 """ Specification - pubsubserver
@@ -23,15 +28,14 @@ from the server.
 """
 
 import json
-from re import split
 import sys
 import socket
 import select
 from uuid import uuid4
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional
 from threading import Lock, Thread
-from pubsubclient import Client
 from pubsubshared import *
 
 ### Constants ##################################################################
@@ -209,37 +213,35 @@ class PubSubServer:
         self.uid = str(uuid4())
         self.messenger = MessageProtocol(is_server=True, id=self.id, uid=self.uid)
         self.commands = Commands()
+        self._msg_cache = MessageCache()
 
         self.did_quit = False
         self._did_quit_lock = Lock()
         
         self.clients: list[ClientConnection] = []
         self._clients_lock = Lock()
-
         self.peers = []
         # self.peers = [
         # { "id": "Server_A", "socket": <socket_obj>, "address": "127.0.0.1:5000", uid: "uuid-111" },
         # ]
         self._peers_lock = Lock()
 
-        self.peer_federation_map = {}
+        # --- Federation Stuff --- #
+        self.peer_federation_map = {
+            self.id: self.uid,
+        }
         # self.federation_map = {
         #     "Server_A": "uuid-111",
         # }
-        self._peer_federation_map_lock = Lock()
-
         self.client_federation_map = {}
         # self.client_federation_map = {
-        #     "Server_A": "Client_A",
+        #     "Server_A": ["Client_A", "Client_B"],
         # }
+        self.fed_time_stamp = datetime.now()
+
+        self._peer_federation_map_lock = Lock()
         self._client_federation_map_lock = Lock()
-
-        # NOTE: current plan for notifying -> have list of the servers that have seen this
-        # somewhere in the messge. And then if you haven't seen this, or have peers that haven't
-        # seen this, then record or pass it in. If you dont meet either of those, just drop packet
-        # Last updated timestamp on packet notifiers. To make sure it's the most recent data
-
-        self._msg_cache = MessageCache()
+        self._fed_time_stamp_lock = Lock()
         
     def set_did_quit(self, boolean):
         with self._did_quit_lock:
@@ -270,11 +272,15 @@ class PubSubServer:
     def list_peers_all(self):
         with self._peer_federation_map_lock:
             display_list = []
+            for peer in self.peer_federation_map.keys():
+                if peer != self.id:
+                    display_list.append(peer)
 
         display_list = sorted(display_list)
 
         if len(display_list) != 0:
-            print_stderr("TODO")
+            for peer in display_list:
+                print(peer)
         else:
             self.commands.show_no_peers_connected()
 
@@ -285,8 +291,9 @@ class PubSubServer:
         return peers
 
     def remove_peer(self, peer):
-        with self._peers_lock:
+        with self._peers_lock and self._peer_federation_map_lock:
             self.peers.remove(peer)
+            self.peer_federation_map.pop(peer["id"])
     
     def attempt_connection_to_peer(self, server: str, serv_port: str) -> tuple[int, Connection]:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -332,7 +339,18 @@ class PubSubServer:
             uid = peer["uid"]
             known_peers.append({"id": id, "uid": uid})
 
-        msg = self.messenger.gen_msg(self.messenger.CONN_CODE, {"known_peers": known_peers})
+
+        with (self._fed_time_stamp_lock and
+              self._client_federation_map_lock and
+              self._peer_federation_map_lock):
+            message = {
+                "known_peers": known_peers,
+                "peers_list": self.peer_federation_map,
+                "clients_list": self.client_federation_map,
+                "time_changed": self.fed_time_stamp.strftime("%Y-%m-%d %H:%M:%S")
+            }
+
+        msg = self.messenger.gen_msg(self.messenger.CONN_CODE, message)
         msg = self.messenger.encode_msg(msg)
         self.messenger.send_msg(conn.sock, msg)
 
@@ -371,6 +389,14 @@ class PubSubServer:
                     "host": conn.host,
                     "port": conn.port
                 }
+
+                with self._peers_lock and self._peer_federation_map_lock:
+                    self.peers.append(peer)
+                    self.peer_federation_map.setdefault(peer["id"], "")
+                    self.peer_federation_map[peer["id"]] = peer["uid"]
+
+                self.merge_federation_maps(msg_data["message"])
+
                 return ServErrCode.OK_CODE, peer
 
             except:
@@ -405,8 +431,6 @@ class PubSubServer:
             connection.sock.settimeout(None)
             if err == ServErrCode.OK_CODE and peer != None:
                 PeerConnections.show_peer_connected_msg(argvalue, peer["id"])
-                with self._peers_lock:
-                    self.peers.append(peer)
                 Thread(target=self.start_receiving_from_peer,
                        args=(peer,), daemon=True).start()
             elif err == ServErrCode.INCOMPATIBLE_PEER:
@@ -450,13 +474,19 @@ class PubSubServer:
 
 
     def list_clients_all(self):
-        all_clients = self.get_all_clients()
-        display_list = []
-        
+        with self._client_federation_map_lock:
+            clients = self.client_federation_map
+            display_list = []
+
+            for server, c_list in clients.items():
+                for c in c_list:
+                    display_list.append(f"{server}:{c}")
+            
         display_list = sorted(display_list)
 
         if len(display_list) != 0:
-            print_stderr("TODO")
+            for display in display_list:
+                print_stdout(display)
         else:
             self.commands.show_no_clients_connected()
 
@@ -472,18 +502,20 @@ class PubSubServer:
         with self._clients_lock:
             return list(self.clients)
 
-    def get_all_clients(self):
-        with self._client_federation_map_lock:
-            for mapping in self.client_federation_map.items():
-                pass
-
-
     def add_client(self, client: ClientConnection) -> None:
-        with self._clients_lock:
+        with self._clients_lock and self._client_federation_map_lock:
             self.clients.append(client)
+            self.client_federation_map.setdefault(self.id, []).append(client.id)
+
+            print(self.client_federation_map)
+
 
     def remove_client(self, client: ClientConnection) -> None:
-        self.clients.remove(client)
+        with self._clients_lock and self._client_federation_map_lock:
+            self.clients.remove(client)
+            
+            clients = self.client_federation_map[self.id]
+            clients.remove(client.id)
 
     def is_duplicate_client_id(self, id: str) -> bool:
         for client in self.get_clients():
@@ -529,14 +561,12 @@ class PubSubServer:
                         "comms": f"{publishing_server}:{id}",
                     }
 
-
                     share_msg = self.messenger.gen_msg(
                         msg_code=self.messenger.PUBLISH_CODE,
                         message=msg,
                         msg_id=msg_id,
                         ttl=ttl-1
                     )
-                    
 
                     self.relay_published_msg(topic, share_msg)
                     return self.messenger.PUBLISH_CODE
@@ -617,6 +647,7 @@ class PubSubServer:
         self.show_client_disconnect(client.id)
         self.close_client_connection(client)
         self.remove_client(client)
+        self.push_updated_map()
 
     def start_receiving_from_peer(self, peer):
         # TODO:
@@ -644,12 +675,17 @@ class PubSubServer:
                     code = msg_data["code"]
 
                     if msg_data["ttl"] == 0:
-                        # Ignore message
+                        # NOTE: Ignore message as it has run out of hops,
+                        # and most likely has been seen by every server
+                        # As the hops is when it reaches a new server,
+                        # not every server it's reached. I.e, this server can send
+                        # it when its ttl went from 13 -> 12, but 3 other peers
+                        # will receive the same message with 12 hops. Just
+                        # saves bandwidth to have a time where a message dies
+                        # and isn't being thrown around uselessly
                         continue
 
                     msg_data["ttl"] = int(msg_data["ttl"]) - 1
-                    topic = msg_data["message"]["topic"]
-
                     msg_id = msg_data["msg_id"]
 
                     if not self._msg_cache.new_msg(msg_id):
@@ -661,9 +697,13 @@ class PubSubServer:
                         # TODO: NOTIFY PEERS
                         break;
                     elif code == self.messenger.PUBLISH_CODE:
+                        topic = msg_data["message"]["topic"]
                         self.relay_published_msg(topic, msg_data)
                     elif code == self.messenger.SEND_FILE:
+                        topic = msg_data["message"]["topic"]
                         self.relay_sent_file(topic, msg_data)
+                    elif code == self.messenger.FED_MAP_UPDATE:
+                        self.update_federation_maps_and_notify(msg_data)
 
                 except json.JSONDecodeError as e:
                     print("bad client message")
@@ -674,8 +714,80 @@ class PubSubServer:
                 break;
 
         # remove peer connection from self._peers and then federation
-        with self._peers_lock:
-            self.peers.remove(peer)
+        self.remove_peer(peer)
+        # update map
+        self.push_updated_map()
+
+    # --- Federation Maps --- #
+    
+    def merge_federation_maps(self, fed_data):
+        try:
+            time_changed = datetime.strptime(
+                fed_data["time_changed"], "%Y-%m-%d %H:%M:%S")
+
+            clients_list = fed_data["clients_list"]
+            peers_list = fed_data["peers_list"]
+
+
+            with (self._fed_time_stamp_lock 
+                  and self._client_federation_map_lock
+                  and self._peer_federation_map_lock):
+
+                for key, value in peers_list.items():
+                    in_my_map = self.peer_federation_map.get(key)
+                    if in_my_map == None:
+                        self.peer_federation_map.setdefault(key, "")
+                        self.peer_federation_map[key] = value
+
+                for key, value in clients_list.items():
+                    in_my_map = self.client_federation_map.get(key)
+                    if in_my_map == None:
+                        self.client_federation_map.setdefault(key, [])
+                        self.client_federation_map[key] = value
+
+                self.fed_time_stamp = time_changed
+        except Exception as e:
+            print(e)
+
+
+    def update_federation_maps_and_notify(self, update_msg):
+        # Check timestamp against my current maps timestamp
+        #   If newer, replace
+        #   Otherwise, ignore
+        # Continue mesasge propogation
+        #   -> from previous function work, just encode msg_data and push
+        ##
+        fed_data = update_msg["message"]
+        time_changed = datetime.strptime(
+                fed_data["time_changed"], "%Y-%m-%d %H:%M:%S")
+        clients_list = fed_data["clients_list"]
+        peers_list = fed_data["peers_list"]
+
+        # Grab all the locks incase a more recent update does happen, while
+        # im doing the checks and whatnot
+        with (self._fed_time_stamp_lock and 
+            self._client_federation_map_lock and 
+            self._peer_federation_map_lock):
+
+            timediff = (self.fed_time_stamp - time_changed).total_seconds()
+
+            if timediff < 0:
+                # Positive time would mean my timestamp is newer
+                # Negative means their's is, so change map
+                self.client_federation_map = clients_list
+                self.peer_federation_map = peers_list
+                self.fed_time_stamp = time_changed
+                # NOTE: I use the time_changed from the received message
+                # As there could be a newer version already in transit on the
+                # network, so i don't want to potentially overwrite that
+
+                # Propogate to other peers
+                encoded = self.messenger.encode_msg(update_msg)
+                # again. Not making a new message, 
+                # just pushing the message i received
+                for p in self.get_peers(): 
+                    self.messenger.send_msg(p["socket"], encoded)
+
 
 
     # --- Message Forwarding --- #
@@ -691,6 +803,10 @@ class PubSubServer:
                 self.messenger.send_msg(c.sock, self.messenger.encode_msg(msg))
 
 
+    # HACK: Duplicated code
+    # Due to new protocol needing message ids to stay the same when being
+    # relayed, we don't need to generate a brand new message. 
+    # And can just forward the message given
     def relay_published_msg(self, topic, msg):
         # Send to peers
         for p in self.get_peers():
@@ -700,6 +816,39 @@ class PubSubServer:
         for c in self.get_clients():
             if c.matches_subscription(topic, msg):
                 self.messenger.send_msg(c.sock, self.messenger.encode_msg(msg))
+
+
+    def push_updated_map(self):
+        # NOTE:
+        # message = {
+        #   "time_changed": datetime.now(),
+        #   "clients_list": self.clients_federation_map,
+        #   "peers_list": self.peers_federation_map }
+        # Thought proceess is im broadcasting this to every server.
+        # When a server receives this, it will check it's current time stamp
+        # If this new list has a younger timestamp, replace and continue
+        # propogating this federation map
+        
+        with self._client_federation_map_lock and self._peer_federation_map_lock:
+            federation_clients_list = self.client_federation_map
+            federation_peers_list = self.peer_federation_map
+
+        message = {
+            "time_changed": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "clients_list": federation_clients_list,
+            "peers_list": federation_peers_list
+        }
+        # NOTE: With "time_changed" i dont want each new hop to reset this
+        # so i need the originating server's timestamp of when they sent this
+        # not a new one every update push.
+        # MEANING: Either this function only works for the server publishing this
+        # and then a separate update function that then sends it to the peers
+
+
+        msg = self.messenger.gen_msg(self.messenger.FED_MAP_UPDATE, message)
+        encoded = self.messenger.encode_msg(msg)
+        for p in self.get_peers(): # HACK: This deserves it own function throughout
+            self.messenger.send_msg(p["socket"], encoded)
 
 
     # --- Connection Handling --- #
@@ -781,6 +930,17 @@ class PubSubServer:
                                     if p["id"] == kp["id"] and p["uid"] != kp["uid"]:
                                         return (ServErrCode.DUP_SERVER_ID, None)
 
+
+                    with self._peers_lock and self._peer_federation_map_lock:
+                        self.peers.append(peer)
+                        self.peer_federation_map.setdefault(peer["id"], "")
+                        self.peer_federation_map[peer["id"]] = peer["uid"]
+
+                    PeerConnections.show_received_peer_connection_msg(peer["id"])
+
+                    self.merge_federation_maps(msg_data["message"])
+                    self.push_updated_map()
+
                     return (ServErrCode.OK_CODE, peer)
 
 
@@ -794,7 +954,6 @@ class PubSubServer:
 
 
     def start_connection(self, connection_socket: socket.socket):
-        # WARNING: DOESN'T WORK FOR PEER SERVERS CONNECTING
         try:
             err, connected_program = self.initialise_connection(connection_socket)
             connection_socket.settimeout(None) # remove timeout used in ^^
@@ -825,13 +984,11 @@ class PubSubServer:
                 self.messenger.send_msg(connection_socket,
                                         self.messenger.encode_msg(raw_msg))
                 self.add_client(connected_program)
+                self.push_updated_map()
                 self.start_receiving_from_client(connected_program)
             else:
                 raw_msg = self.messenger.gen_msg(self.messenger.OK_CODE)
                 self.messenger.send_msg(connection_socket, self.messenger.encode_msg(raw_msg))
-                with self._peers_lock:
-                    self.peers.append(connected_program)
-                    PeerConnections.show_received_peer_connection_msg(connected_program["id"])
                 self.start_receiving_from_peer(connected_program)
 
         except Exception as e:  # HACK: This needs changing to be more useful
