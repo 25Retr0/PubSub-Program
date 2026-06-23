@@ -507,8 +507,6 @@ class PubSubServer:
             self.clients.append(client)
             self.client_federation_map.setdefault(self.id, []).append(client.id)
 
-            print(self.client_federation_map)
-
 
     def remove_client(self, client: ClientConnection) -> None:
         with self._clients_lock and self._client_federation_map_lock:
