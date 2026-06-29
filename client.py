@@ -1,4 +1,6 @@
 from threading import Thread
+import select
+import sys
 
 from Subscriptions import SubscriptionManager
 from CommandHandler import ClientCommandHandler
@@ -11,20 +13,31 @@ class Client:
         self.connection = connection
 
         self.subscriptions = SubscriptionManager()
+        # self.rate_limiter = RateLimiter()
+        # self.file_handler = FileHandler()
         self.commands = ClientCommandHandler()
         self.interface = ClientCLI()
 
+        self._running = False
+        self._error_code = 0
 
     def read_user_input(self):
-        print("reading...")
-        return ""
+        try:
+            ready, _, _ = select.select([sys.stdin], [], [], 0.2)
+            if ready:
+                return sys.stdin.readline().strip()
+        except (EOFError, KeyboardInterrupt) as e:
+            print(f"Exception in read_user_input, exiting...")
+            self._running = False
+            self._error_code = 1
+            return ""
 
     def handle_user_input(self, args):
-        print("handling...")
-        return 1
+        if args == "quit":
+            self._running = False
 
-    def receive_from_server(self, server_connection):
-        return 0
+    def receive_from_server(self):
+        pass
 
     def read_server_message(self):
         pass
@@ -32,15 +45,24 @@ class Client:
     def handle_server_message(self):
         pass
 
-    def run(self, connection):
+    def run(self):
+        self._running = True
+
         Thread(
             target=self.receive_from_server,
-            args=(connection,),
+            args=(),
             daemon=True
         ).start()
 
-        while True:
+        while self._running:
             user_input = self.read_user_input()
-            error_code = self.handle_user_input(user_input)
-            if error_code != 0:
+            if not user_input:
+                continue
+            print(user_input)
+
+            self.handle_user_input(user_input)
+            if self._error_code != 0:
                 break
+
+        print(f"exiting with code: {self._error_code}")
+        return self._error_code
