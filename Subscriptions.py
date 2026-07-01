@@ -10,7 +10,7 @@ class SubscriptionManager:
 
     def add_subscription(self, topic, filter_criteria=None) -> bool:
         sub = Subscription(topic)
-        if filter:
+        if filter_criteria:
             sub.add_filter(filter_criteria)
 
         for other in self._subscriptions:
