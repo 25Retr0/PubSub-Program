@@ -21,7 +21,7 @@ Meaning of each argument:
  - `--topic` - specifies that the following value argument is the initial default topic for messages published by this client
  - `[server]:port` - argument must be present and optionally specifies the name or IPv4 address of the server to connect to before the colon (localhost is used if not specified) and, after the colon, the port number of service name to connect to
  - `clientid` - argument must be present and is a unique identifier for the client
- - `message` - optional argument that indicates that the client should immediately publish the given message. *REQUIRES* the `--topic` argument to be given with an associated topic value
+ - `message` - optional argument that indicates that the client should immediately publish the given message. **REQUIRES** the `--topic` argument to be given with an associated topic value
 
  #### Functions of pubsubclient
 
