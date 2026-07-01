@@ -21,9 +21,6 @@ class Client:
         self._running = False
         self._error_code = 0
 
-    def get_interface(self):
-        return self.interface
-
     def quit(self) -> None:
         self._running = False
         self._error_code = 0
