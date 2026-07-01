@@ -1,3 +1,5 @@
+from extras import is_valid_topic, is_valid_message
+
 ###############################################################################
 class ClientCommandHandler:
 
@@ -54,34 +56,71 @@ class ClientCommandHandler:
             return False
 
         command_func = self.dispatch[cmd]
-        return command_func(args)
+        return command_func(cmd, args)
 
-    def quit_program(self, args) -> bool:
+    def quit_program(self, cmd, args) -> bool:
         if args:
+            self.client.interface.display_error(
+                    self.commands.unknown_arguments_msg(cmd))
             return False
 
         self.client.quit()
         return True
 
-    def set_topic(self, args) -> bool:
+    def set_topic(self, cmd, args) -> bool:
+        if len(args) != 1:
+            self.client.interface.display_error(
+                    self.commands.unknown_arguments_msg(cmd))
+            return False
+
+        topic = args[0]
+        if not is_valid_topic(topic):
+            self.client.interface.display_error(
+                    self.commands.invalid_topic_msg(topic))
+            return False
+
+        self.client.set_topic(topic)
+        return True
+
+    def subscribe(self, cmd, args) -> bool:
+        # args is [topic, filter]
+
+        if len(args) != 1 and len(args) != 2:
+            self.client.interface.display_error(
+                    self.commands.unknown_arguments_msg(cmd))
+            return False
+
+        topic = args[0]
+        if not is_valid_topic(topic):
+            self.client.interface.display_error(
+                    self.commands.invalid_topic_msg(topic))
+            return False
+
+        filter = args[1] if len(args) == 2 else None
+        self.client.add_subscription(topic, filter)
+
         return False
 
-    def subscribe(self, args) -> bool:
+    def unsubscribe(self, cmd, args) -> bool:
         return False
 
-    def unsubscribe(self, args) -> bool:
+    def list_subscriptions(self, cmd, args) -> bool:
+        if args:
+            self.client.interface.display_error(
+                    self.commands.unknown_arguments_msg(cmd))
+            return False
+
+        subs = self.client.subscriptions.get_subscriptions()
+        # TODO: interface to show subscriptions
+        return True
+
+    def list_limits(self, cmd, args) -> bool:
         return False
 
-    def list_subscriptions(self, args) -> bool:
+    def publish_message(self, cmd, args) -> bool:
         return False
 
-    def list_limits(self, args) -> bool:
-        return False
-
-    def publish_message(self, args) -> bool:
-        return False
-
-    def send_file(self, args) -> bool:
+    def send_file(self, cmd, args) -> bool:
         return False
 
 ###############################################################################
@@ -101,7 +140,7 @@ class CommandMessages:
         return f"unknown command"
 
     def unknown_arguments_msg(self, command: str) -> str:
-        return f"unknown argument(s) - usage: {self.get_usage_cmd(command)}" 
+        return f"unknown argument(s) - usage: {self.get_usage(command)}" 
 
     def no_topic_msg(self) -> str:
         return f"no default topic set"
@@ -127,7 +166,7 @@ class CommandMessages:
     def invalid_topic_msg(self, topic: str) -> str:
         return f"invalid topic string \"{topic}\""
 
-    def get_usage_cmd(self, command: str) -> str:
+    def get_usage(self, command: str) -> str:
         match command:
             case self.subscribe: return f"{self.subscribe} topic [filter]"
             case self.unsubscribe: return f"{self.unsubscribe} topic"

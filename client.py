@@ -21,6 +21,9 @@ class Client:
         self._running = False
         self._error_code = 0
 
+    def add_subscription(self, topic, filter):
+        self.subscriptions.add_subscription(topic, filter)
+
     def quit(self) -> None:
         self._running = False
         self._error_code = 0
