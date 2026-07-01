@@ -4,7 +4,6 @@ class ClientCommandHandler:
     def __init__(self, client):
         self.commands = CommandMessages()
         self.client = client
-        self.interface = client.get_interface()
 
         self.dispatch = {
             self.commands.quit: self.quit_program,
@@ -51,7 +50,7 @@ class ClientCommandHandler:
 
     def handle_command(self, cmd, args) -> bool:
         if not cmd in self.dispatch:
-            #self.interface.display_error(self.commands.unknown_command_msg())
+            self.client.interface.display_error(self.commands.unknown_command_msg())
             return False
 
         command_func = self.dispatch[cmd]
