@@ -9,15 +9,19 @@ from CLI import ClientCLI
 class Client:
 
     def __init__(self, client_id, connection):
-        self._identifier = client_id
+        self.identifier = client_id
         self.connection = connection
 
         self.subscriptions = SubscriptionManager()
         # self.rate_limiter = RateLimiter()
         # self.file_handler = FileHandler()
-        self.commands = ClientCommandHandler()
+        self.commands = ClientCommandHandler(self)
         self.interface = ClientCLI()
 
+        self._running = False
+        self._error_code = 0
+
+    def quit(self) -> None:
         self._running = False
         self._error_code = 0
 
@@ -32,9 +36,12 @@ class Client:
             self._error_code = 1
             return ""
 
-    def handle_user_input(self, args):
-        if args == "quit":
-            self._running = False
+    def handle_user_input(self, args: str):
+        cmd, cmd_args = self.commands.parse_command(args)
+        if not cmd and not cmd_args:
+            return
+
+        self.commands.handle_command(cmd, cmd_args)
 
     def receive_from_server(self):
         pass
@@ -57,8 +64,8 @@ class Client:
         while self._running:
             user_input = self.read_user_input()
             if not user_input:
-                continue
-            print(user_input)
+                continue    # Nothing to process so just loop again
+            print(f"ECHO: {user_input}")
 
             self.handle_user_input(user_input)
             if self._error_code != 0:
